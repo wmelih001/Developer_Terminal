@@ -27,6 +27,46 @@ func (m *MainModel) actionsView() string {
 		return lipgloss.NewStyle().Foreground(ColorRed).Render("❌ YOK")
 	}
 
+	// Helper to get technology icon
+	getTechIcon := func(techType string) string {
+		icons := map[string]string{
+			"Next.js":      "⚡",
+			"React":        "⚛️",
+			"Vue":          "💚",
+			"Vite":         "⚡",
+			"React Native": "📱",
+			"Mobile":       "📱",
+			"HTML":         "🌐",
+			"TypeScript":   "🔷",
+			"NestJS":       "🐱",
+			"Express":      "🚂",
+			"Go":           "🐹",
+			"Django":       "🐍",
+			"Flask":        "🧪",
+			"Laravel":      "🐘",
+			"Spring":       "☕",
+			"PHP":          "🐘",
+			"Docker":       "🐳",
+			"Bilinmeyen":   "📦",
+		}
+		if icon, ok := icons[techType]; ok {
+			return icon
+		}
+		return "📦"
+	}
+
+	// Frontend label with technology name
+	frontendLabel := "🖥️ Frontend"
+	if p.FrontendType != "" && p.FrontendType != "Bilinmeyen" {
+		frontendLabel = fmt.Sprintf("%s Frontend (%s)", getTechIcon(string(p.FrontendType)), p.FrontendType)
+	}
+
+	// Backend label with technology name
+	backendLabel := "⚙️ Backend"
+	if p.BackendType != "" && p.BackendType != "Bilinmeyen" {
+		backendLabel = fmt.Sprintf("%s Backend (%s)", getTechIcon(string(p.BackendType)), p.BackendType)
+	}
+
 	// Sol Kolon (Frontend)
 	frontVer := "Yok"
 	if p.FrontendVer != "" {
@@ -50,54 +90,69 @@ func (m *MainModel) actionsView() string {
 	// Styles for alignment
 	cellStyle := lipgloss.NewStyle().Padding(0, 1).Width(col1W)  // 35 width
 	cellStyleR := lipgloss.NewStyle().Padding(0, 1).Width(col2W) // 34 width
+	fullRowStyle := lipgloss.NewStyle().Padding(0, 1).Width(innerW)
 
 	borderColor := ColorGrey
 
 	// 1. Top Border
-	// ┌──────────────────────────────────────────────────────────────────────┐
 	topBorder := lipgloss.NewStyle().Foreground(borderColor).Render("┌" + strings.Repeat("─", innerW) + "┐")
 
 	// 2. Name Row
-	// │ PROJE: ...                                                           │
 	nameContent := "📂 PROJE: " + IconStyle.Render(p.Name)
 	nameRowStr := lipgloss.NewStyle().Width(innerW).Padding(0, 1).Render(nameContent)
 	nameRow := lipgloss.NewStyle().Foreground(borderColor).Render("│") + nameRowStr + lipgloss.NewStyle().Foreground(borderColor).Render("│")
 
 	// 3. Separator 1 (Split)
-	// ├───────────────────────────────────┬──────────────────────────────────┤
-	// 35 dashes + 1 (┬) + 34 dashes
 	sep1 := lipgloss.NewStyle().Foreground(borderColor).Render("├" + strings.Repeat("─", col1W) + "┬" + strings.Repeat("─", col2W) + "┤")
 
-	// 4. Version Row
-	// │ Next.js: ...                      │ Nest.js: ...                     │
-	vLeftStr := cellStyle.Render(fmt.Sprintf("📦 Next.js: %s", ValueStyle.Render(frontVer)))
-	vRightStr := cellStyleR.Render(fmt.Sprintf("📦 Nest.js: %s", ValueStyle.Render(backVer)))
+	// 4. Version Row - Dynamic labels based on detected tech
+	frontVerLabel := "📦 Versiyon"
+	if p.FrontendType != "" && p.FrontendType != "Bilinmeyen" {
+		frontVerLabel = fmt.Sprintf("%s %s", getTechIcon(string(p.FrontendType)), p.FrontendType)
+	}
+	backVerLabel := "📦 Versiyon"
+	if p.BackendType != "" && p.BackendType != "Bilinmeyen" {
+		backVerLabel = fmt.Sprintf("%s %s", getTechIcon(string(p.BackendType)), p.BackendType)
+	}
+
+	vLeftStr := cellStyle.Render(fmt.Sprintf("%s: %s", frontVerLabel, ValueStyle.Render(frontVer)))
+	vRightStr := cellStyleR.Render(fmt.Sprintf("%s: %s", backVerLabel, ValueStyle.Render(backVer)))
 	verRow := lipgloss.NewStyle().Foreground(borderColor).Render("│") + vLeftStr + lipgloss.NewStyle().Foreground(borderColor).Render("│") + vRightStr + lipgloss.NewStyle().Foreground(borderColor).Render("│")
 
 	// 5. Separator 2 (Cross)
-	// ├───────────────────────────────────┼──────────────────────────────────┤
 	sep2 := lipgloss.NewStyle().Foreground(borderColor).Render("├" + strings.Repeat("─", col1W) + "┼" + strings.Repeat("─", col2W) + "┤")
 
-	// 6. Status Row
-	// │ Frontend: VAR                     │ Backend: VAR                     │
-	sLeftStr := cellStyle.Render(fmt.Sprintf("️🖥️ Frontend: %s", renderCheck(p.HasFrontend)))
-	sRightStr := cellStyleR.Render(fmt.Sprintf("⚙️ Backend: %s", renderCheck(p.HasBackend)))
+	// 6. Status Row - Dynamic labels
+	sLeftStr := cellStyle.Render(fmt.Sprintf("%s: %s", frontendLabel, renderCheck(p.HasFrontend)))
+	sRightStr := cellStyleR.Render(fmt.Sprintf("%s: %s", backendLabel, renderCheck(p.HasBackend)))
 	statRow := lipgloss.NewStyle().Foreground(borderColor).Render("│") + sLeftStr + lipgloss.NewStyle().Foreground(borderColor).Render("│") + sRightStr + lipgloss.NewStyle().Foreground(borderColor).Render("│")
 
-	// 7. Bottom Border (Join)
-	// └───────────────────────────────────┴──────────────────────────────────┘
-	botBorder := lipgloss.NewStyle().Foreground(borderColor).Render("└" + strings.Repeat("─", col1W) + "┴" + strings.Repeat("─", col2W) + "┘")
+	// 7. Docker Row (if exists)
+	var dockerRow string
+	var sep3 string
+	if p.HasDocker {
+		sep3 = lipgloss.NewStyle().Foreground(borderColor).Render("├" + strings.Repeat("─", innerW) + "┤")
+		dockerContent := fullRowStyle.Render(fmt.Sprintf("🐳 Docker: %s", lipgloss.NewStyle().Foreground(ColorGreen).Render("✅ VAR")))
+		dockerRow = lipgloss.NewStyle().Foreground(borderColor).Render("│") + dockerContent + lipgloss.NewStyle().Foreground(borderColor).Render("│")
+	}
+
+	// 8. Bottom Border
+	var botBorder string
+	if p.HasDocker {
+		botBorder = lipgloss.NewStyle().Foreground(borderColor).Render("└" + strings.Repeat("─", innerW) + "┘")
+	} else {
+		botBorder = lipgloss.NewStyle().Foreground(borderColor).Render("└" + strings.Repeat("─", col1W) + "┴" + strings.Repeat("─", col2W) + "┘")
+	}
 
 	// Assemble
-	finalBox := lipgloss.JoinVertical(lipgloss.Left,
-		topBorder,
-		nameRow,
-		sep1,
-		verRow,
-		sep2,
-		statRow,
-		botBorder,
-	)
+	var boxParts []string
+	boxParts = append(boxParts, topBorder, nameRow, sep1, verRow, sep2, statRow)
+	if p.HasDocker {
+		boxParts = append(boxParts, sep3, dockerRow)
+	}
+	boxParts = append(boxParts, botBorder)
+
+	finalBox := lipgloss.JoinVertical(lipgloss.Left, boxParts...)
 
 	// --- SEÇENEKLER ---
 	var b strings.Builder

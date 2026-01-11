@@ -436,20 +436,71 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Listeyi burada başlat
 		items := make([]list.Item, len(m.Projects))
 		for i, p := range m.Projects {
+			// Technology icon helper
+			getTechIcon := func(techType domain.ProjectType) string {
+				icons := map[domain.ProjectType]string{
+					domain.TypeNext:        "⚡",
+					domain.TypeReact:       "⚛️",
+					domain.TypeVue:         "💚",
+					domain.TypeVite:        "⚡",
+					domain.TypeReactNative: "📱",
+					domain.TypeMobile:      "📱",
+					domain.TypeHTML:        "🌐",
+					domain.TypeTypeScript:  "🔷",
+					domain.TypeNest:        "🐱",
+					domain.TypeExpress:     "🚂",
+					domain.TypeGo:          "🐹",
+					domain.TypeDjango:      "🐍",
+					domain.TypeFlask:       "🧪",
+					domain.TypeLaravel:     "🐘",
+					domain.TypeSpring:      "☕",
+					domain.TypePHP:         "🐘",
+					domain.TypeDocker:      "🐳",
+				}
+				if icon, ok := icons[techType]; ok {
+					return icon
+				}
+				return ""
+			}
+
+			// Build combined icon (Frontend + Backend)
+			var iconParts []string
+			if p.FrontendType != "" && p.FrontendType != domain.TypeUnknown {
+				if ic := getTechIcon(p.FrontendType); ic != "" {
+					iconParts = append(iconParts, ic)
+				}
+			}
+			if p.BackendType != "" && p.BackendType != domain.TypeUnknown {
+				if ic := getTechIcon(p.BackendType); ic != "" {
+					iconParts = append(iconParts, ic)
+				}
+			}
+			// Docker indicator
+			if p.HasDocker {
+				iconParts = append(iconParts, "🐳")
+			}
+
 			icon := "📁 "
-			switch p.Type {
-			case domain.TypeReact:
-				icon = "⚛️ "
-			case domain.TypeNext:
-				icon = "▲ "
-			case domain.TypeNest:
-				icon = "🦁 "
-			case domain.TypeGo:
-				icon = "🐹 "
+			if len(iconParts) > 0 {
+				icon = strings.Join(iconParts, "") + " "
+			}
+
+			// Build technology description (Frontend + Backend names)
+			var techParts []string
+			if p.FrontendType != "" && p.FrontendType != domain.TypeUnknown {
+				techParts = append(techParts, string(p.FrontendType))
+			}
+			if p.BackendType != "" && p.BackendType != domain.TypeUnknown {
+				techParts = append(techParts, string(p.BackendType))
+			}
+
+			techDesc := "Bilinmeyen"
+			if len(techParts) > 0 {
+				techDesc = strings.Join(techParts, " + ")
 			}
 
 			// Title: Icon + Name
-			items[i] = item{title: icon + p.Name, desc: string(p.Type) + " | " + p.Path, project: &m.Projects[i]}
+			items[i] = item{title: icon + p.Name, desc: techDesc + " | " + p.Path, project: &m.Projects[i]}
 		}
 
 		// List Configuration

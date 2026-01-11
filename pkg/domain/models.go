@@ -23,8 +23,11 @@ type Project struct {
 	Tags         []string
 	HasFrontend  bool
 	HasBackend   bool
+	HasDocker    bool // Docker desteği var mı
 	FrontendVer  string
 	BackendVer   string
+	FrontendType ProjectType // Algılanan frontend teknolojisi (Next.js, React, Vue vb.)
+	BackendType  ProjectType // Algılanan backend teknolojisi (NestJS, Go, Django vb.)
 	FrontendCmd  string
 	BackendCmd   string
 	FrontendPath string
@@ -35,9 +38,29 @@ type Project struct {
 type ProjectType string
 
 const (
-	TypeReact   ProjectType = "React"
-	TypeNext    ProjectType = "Next.js"
+	// Frontend
+	TypeReact       ProjectType = "React"
+	TypeNext        ProjectType = "Next.js"
+	TypeVue         ProjectType = "Vue"
+	TypeVite        ProjectType = "Vite"
+	TypeReactNative ProjectType = "React Native"
+	TypeMobile      ProjectType = "Mobile"
+	TypeHTML        ProjectType = "HTML"
+	TypeTypeScript  ProjectType = "TypeScript"
+
+	// Backend
 	TypeNest    ProjectType = "NestJS"
+	TypeExpress ProjectType = "Express"
 	TypeGo      ProjectType = "Go"
+	TypeDjango  ProjectType = "Django"
+	TypeFlask   ProjectType = "Flask"
+	TypeLaravel ProjectType = "Laravel"
+	TypeSpring  ProjectType = "Spring"
+	TypePHP     ProjectType = "PHP"
+
+	// Infrastructure
+	TypeDocker ProjectType = "Docker"
+
+	// Unknown
 	TypeUnknown ProjectType = "Bilinmeyen"
 )
