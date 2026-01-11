@@ -1,0 +1,15 @@
+commands:
+    launch_backend: wt.exe -w 0 new-tab -d "{{.BackendPath}}" --title "{{.Name}} Backend" cmd /k "{{.BackendCmd}}"
+    launch_frontend: wt.exe -w 0 new-tab -d "{{.FrontendPath}}" --title "{{.Name}} Frontend" cmd /k "{{.FrontendCmd}}"
+    launch_full: wt.exe -w 0 new-tab -d "{{.FrontendPath}}" --title "{{.Name}} Full" cmd /k "{{.FrontendCmd}}" ; split-pane -d "{{.BackendPath}}" cmd /k "{{.BackendCmd}}"
+ignored_files:
+    - node_modules
+    - .git
+    - .next
+    - dist
+    - coverage
+    - __pycache__
+ngrok_path: C:\Users\hmeli\AppData\Local\Microsoft\WinGet\Links\ngrok.exe
+projects_paths:
+    - M:\Projeler
+    - C:\Work\Github

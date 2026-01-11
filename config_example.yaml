@@ -1,0 +1,18 @@
+commands:
+  launch_frontend: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Frontend" cmd /k "npm run dev"'
+  launch_backend: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Backend" cmd /k "go run ."'
+  launch_full: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Full" cmd /k "npm run dev" ; split-pane -d "{{.Path}}" cmd /k "go run ."'
+
+ignored_files:
+  - "node_modules"
+  - ".git"
+  - ".next"
+  - "dist"
+  - "coverage"
+  - "__pycache__"
+
+ngrok_path: C:\Users\{USERNAME}\AppData\Local\Microsoft\WinGet\Links\ngrok.exe
+
+projects_paths:
+  - "Z:\\Projects"
+  - "C:\\Work\\Github"

@@ -1,0 +1,83 @@
+# DEVELOPER TERMINAL
+
+![Go Sürümü](https://img.shields.io/badge/go-1.21+-00ADD8?style=flat-square&logo=go)
+![Lisans](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
+
+Developer Terminal, eski PowerShell profil betiklerinin yerini almak üzere tasarlanmış, yüksek performanslı bir Geliştirici Kontrol Paneli ve CLI aracıdır. Go ve Bubble Tea framework'ü ile geliştirilen bu araç; proje yönetimi, yapay zeka bağlamı (context) oluşturma ve geliştirme ortamını izleme işlemleri için modern, klavye odaklı bir Terminal Kullanıcı Arayüzü (TUI) sunar.
+
+## Özellikler
+
+### 🚀 Proje Başlatıcı
+Çalışma alanınızdaki dizinleri anında tarayın ve projelerinizi tek bir tuşla Windows Terminal'de başlatın. Proje türlerini otomatik olarak algılar ve özel başlatma modları sunar:
+- **Frontend**: Proje dizinindeki `package.json` dosyasını analiz eder ve uygun başlatma komutunu (örn. `npm run dev`) otomatik olarak belirleyip yeni sekmede çalıştırır.
+- **Backend**: Backend projesinin türünü (Go, NestJS vb.) algılar ve ilgili çalıştırma komutunu (örn. `go run .` veya `npm run start:dev`) yeni sekmede başlatır.
+- **Full Stack**: Terminal penceresini ikiye bölerek her ikisini aynı anda çalıştırır.
+
+### 🧠 Yapay Zeka Bağlam Oluşturucu
+Büyük Dil Modelleri (LLM) için derinlemesine ve yapısal bağlamlar oluşturun. Bir proje seçin ve `.gitignore` kurallarına sadık kalarak kod tabanınızın temiz bir ASCII ağaç yapısını üretin. Çıktı anında panoya kopyalanır, yapay zekaya prompt girmek için hazırdır.
+
+### 🩺 Bağımlılık Doktoru
+Projelerinizi sağlıklı tutun. Developer Terminal, `package.json` dosyalarını analiz ederek temel framework'lerin (React, Next.js, NestJS) güncel sürümlerini görüntüler ve terminalden çıkmadan güncelliğini yitirmiş bağımlılıkları kontrol eder.
+
+### 🚇 Ngrok Entegrasyonu
+Yerel tünellerinizi doğrudan kontrol panelinden yönetin. Ngrok yolunuzu yapılandırın ve aktif tünel durumunu zahmetsizce görüntüleyin.
+
+### 🎨 Modern TUI
+Siberpunk esintili estetiğe sahip birinci sınıf bir geliştirici aracı deneyimi yaşayın.
+- **Klavye Öncelikli**: Vim tarzı gezinme desteği.
+- **Duyarlı (Responsive)**: Terminal yeniden boyutlandırma olaylarına dinamik olarak uyum sağlar.
+- **Hızlı**: Anında açılış için tek bir yerel (native) binary olarak derlenmiştir.
+
+## Teknoloji Yığını
+
+- **Çekirdek**: Go (Golang) 1.21+
+- **TUI Framework**: [Bubble Tea](https://github.com/charmbracelet/bubbletea)
+- **Stil**: [Lipgloss](https://github.com/charmbracelet/lipgloss)
+- **Yapılandırma**: [Viper](https://github.com/spf13/viper)
+
+## Kurulum
+
+### Gereksinimler
+- Go 1.21 veya üzeri
+- Windows Powershell 7+ (Tam başlatıcı entegrasyonu için önerilir)
+- Nerd Fonts (Simgelerin görünmesi için önerilir)
+
+### Kaynaktan Kurulum
+
+```bash
+git clone https://github.com/kullaniciadi/developer_terminal.git
+cd devterminal
+go install
+```
+
+## Yapılandırma
+
+Developer Terminal, `~/.devterminal/config.yaml` konumunda bulunan bir YAML yapılandırma dosyası kullanır.
+
+> **Not:** Windows'ta tam yol genellikle şöyledir: `C:\Users\KullaniciAdi\.devterminal\config.yaml`
+
+Uygulamayı ilk kez çalıştırdığınızda, yapılandırma dosyası **otomatik olarak oluşturulur** ve size proje klasörlerinizin yolunu sorar. Manuel olarak oluşturmanıza gerek yoktur.
+
+Örnek yapılandırma:
+
+```yaml
+projects_paths:
+  - "C:\\Work\\Github"
+  - "Z:\\Projects"
+
+ignored_files:
+  - "node_modules"
+  - ".git"
+  - "dist"
+
+ngrok_path: "C:\\Users\\User\\AppData\\Local\\Microsoft\\WinGet\\Links\\ngrok.exe"
+
+commands:
+  launch_frontend: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Frontend" cmd /k "npm run dev"'
+  launch_backend: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Backend" cmd /k "go run ."'
+  launch_full: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Full" cmd /k "npm run dev" ; split-pane -d "{{.Path}}" cmd /k "go run ."'
+```
+
+## Lisans
+
+MIT
