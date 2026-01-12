@@ -91,3 +91,70 @@ func parseArgs(cmd string) []string {
 	}
 	return args
 }
+
+// LaunchPrisma opens Prisma Studio for the project
+func (l *Launcher) LaunchPrisma(p *domain.Project) error {
+	path := p.Path
+	if p.PrismaPath != "" {
+		path = p.PrismaPath
+	}
+	cmdStr := fmt.Sprintf(`wt -w 0 nt --title "Prisma Studio" -d "%s" cmd /k "npx prisma studio"`, path)
+
+	args := parseArgs(cmdStr)
+	if len(args) == 0 {
+		return fmt.Errorf("failed to create prisma command")
+	}
+
+	c := exec.Command(args[0], args[1:]...)
+	return c.Start()
+}
+
+// LaunchDrizzle opens Drizzle Studio
+func (l *Launcher) LaunchDrizzle(p *domain.Project) error {
+	path := p.Path
+	if p.DrizzlePath != "" {
+		path = p.DrizzlePath
+	}
+	cmdStr := fmt.Sprintf(`wt -w 0 nt --title "Drizzle Studio" -d "%s" cmd /k "npx drizzle-kit studio"`, path)
+	return l.runCmd(cmdStr)
+}
+
+// LaunchHasura opens Hasura Console
+func (l *Launcher) LaunchHasura(p *domain.Project) error {
+	path := p.Path
+	if p.HasuraPath != "" {
+		path = p.HasuraPath
+	}
+	cmdStr := fmt.Sprintf(`wt -w 0 nt --title "Hasura Console" -d "%s" cmd /k "hasura console"`, path)
+	return l.runCmd(cmdStr)
+}
+
+// LaunchSupabase opens Supabase Dashboard
+func (l *Launcher) LaunchSupabase(p *domain.Project) error {
+	path := p.Path
+	if p.SupabasePath != "" {
+		path = p.SupabasePath
+	}
+	cmdStr := fmt.Sprintf(`wt -w 0 nt --title "Supabase Status" -d "%s" cmd /k "npx supabase status"`, path)
+	return l.runCmd(cmdStr)
+}
+
+// LaunchStorybook opens Storybook
+func (l *Launcher) LaunchStorybook(p *domain.Project) error {
+	path := p.Path
+	if p.StorybookPath != "" {
+		path = p.StorybookPath
+	}
+	cmdStr := fmt.Sprintf(`wt -w 0 nt --title "Storybook" -d "%s" cmd /k "npm run storybook"`, path)
+	return l.runCmd(cmdStr)
+}
+
+// runCmd helper
+func (l *Launcher) runCmd(cmdStr string) error {
+	args := parseArgs(cmdStr)
+	if len(args) == 0 {
+		return fmt.Errorf("failed to create command")
+	}
+	c := exec.Command(args[0], args[1:]...)
+	return c.Start()
+}

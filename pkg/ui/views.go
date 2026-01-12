@@ -38,6 +38,12 @@ func (m *MainModel) actionsView() string {
 			"Mobile":       "📱",
 			"HTML":         "🌐",
 			"TypeScript":   "🔷",
+			"Angular":      "🅰️",
+			"Svelte":       "🔥",
+			"SolidJS":      "💎",
+			"Astro":        "🚀",
+			"Remix":        "💿",
+			"Nuxt":         "💚",
 			"NestJS":       "🐱",
 			"Express":      "🚂",
 			"Go":           "🐹",
@@ -46,6 +52,12 @@ func (m *MainModel) actionsView() string {
 			"Laravel":      "🐘",
 			"Spring":       "☕",
 			"PHP":          "🐘",
+			"FastAPI":      "⚡",
+			"Fiber":        "🔷",
+			"Hono":         "🔥",
+			"Koa":          "🥝",
+			"Flutter":      "🦋",
+			"Expo":         "📱",
 			"Docker":       "🐳",
 			"Bilinmeyen":   "📦",
 		}
@@ -97,8 +109,18 @@ func (m *MainModel) actionsView() string {
 	// 1. Top Border
 	topBorder := lipgloss.NewStyle().Foreground(borderColor).Render("┌" + strings.Repeat("─", innerW) + "┐")
 
-	// 2. Name Row
-	nameContent := "📂 PROJE: " + IconStyle.Render(p.Name)
+	// 2. Name Row with Health Score
+	healthIcon := "🔴"
+	healthColor := ColorRed
+	if p.HealthScore >= 80 {
+		healthIcon = "🟢"
+		healthColor = ColorGreen
+	} else if p.HealthScore >= 50 {
+		healthIcon = "🟡"
+		healthColor = ColorYellow
+	}
+	healthScoreStr := lipgloss.NewStyle().Foreground(healthColor).Render(fmt.Sprintf("%s %d/100", healthIcon, p.HealthScore))
+	nameContent := "📂 PROJE: " + IconStyle.Render(p.Name) + "  " + healthScoreStr
 	nameRowStr := lipgloss.NewStyle().Width(innerW).Padding(0, 1).Render(nameContent)
 	nameRow := lipgloss.NewStyle().Foreground(borderColor).Render("│") + nameRowStr + lipgloss.NewStyle().Foreground(borderColor).Render("│")
 
@@ -119,15 +141,107 @@ func (m *MainModel) actionsView() string {
 	vRightStr := cellStyleR.Render(fmt.Sprintf("%s: %s", backVerLabel, ValueStyle.Render(backVer)))
 	verRow := lipgloss.NewStyle().Foreground(borderColor).Render("│") + vLeftStr + lipgloss.NewStyle().Foreground(borderColor).Render("│") + vRightStr + lipgloss.NewStyle().Foreground(borderColor).Render("│")
 
-	// 5. Separator 2 (Cross)
+	// Helper: Sürüm numarası mı yoksa sadece "Var" mı kontrol et
+	hasRealVersion := func(ver string) bool {
+		// "Var", "iOS", "Android", "iOS & Android" gibi değerler sürüm değil
+		nonVersionValues := []string{"Var", "iOS", "Android", "iOS & Android"}
+		for _, nv := range nonVersionValues {
+			if ver == nv {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Teknolojileri sürümü olanlar ve olmayanlar olarak ayır
+	var frontendWithVersion, frontendWithoutVersion []struct {
+		Type    string
+		Version string
+	}
+	var backendWithVersion, backendWithoutVersion []struct {
+		Type    string
+		Version string
+	}
+
+	for _, ft := range p.DetectedFrontendTechs {
+		tech := struct {
+			Type    string
+			Version string
+		}{string(ft.Type), ft.Version}
+		if hasRealVersion(ft.Version) {
+			frontendWithVersion = append(frontendWithVersion, tech)
+		} else {
+			frontendWithoutVersion = append(frontendWithoutVersion, tech)
+		}
+	}
+
+	for _, bt := range p.DetectedBackendTechs {
+		tech := struct {
+			Type    string
+			Version string
+		}{string(bt.Type), bt.Version}
+		if hasRealVersion(bt.Version) {
+			backendWithVersion = append(backendWithVersion, tech)
+		} else {
+			backendWithoutVersion = append(backendWithoutVersion, tech)
+		}
+	}
+
+	// 5. Versioned tech rows (sürümü olanlar - versiyon satırının altına)
+	var versionedTechRows []string
+	maxVersionedRows := len(frontendWithVersion)
+	if len(backendWithVersion) > maxVersionedRows {
+		maxVersionedRows = len(backendWithVersion)
+	}
+
+	for i := 0; i < maxVersionedRows; i++ {
+		var frontTechStr, backTechStr string
+		if i < len(frontendWithVersion) {
+			ft := frontendWithVersion[i]
+			frontTechStr = fmt.Sprintf("  %s %s: %s", getTechIcon(ft.Type), ft.Type, ValueStyle.Render(ft.Version))
+		}
+		if i < len(backendWithVersion) {
+			bt := backendWithVersion[i]
+			backTechStr = fmt.Sprintf("  %s %s: %s", getTechIcon(bt.Type), bt.Type, ValueStyle.Render(bt.Version))
+		}
+		leftCell := cellStyle.Render(frontTechStr)
+		rightCell := cellStyleR.Render(backTechStr)
+		row := lipgloss.NewStyle().Foreground(borderColor).Render("│") + leftCell + lipgloss.NewStyle().Foreground(borderColor).Render("│") + rightCell + lipgloss.NewStyle().Foreground(borderColor).Render("│")
+		versionedTechRows = append(versionedTechRows, row)
+	}
+
+	// 6. Separator 2 (Cross)
 	sep2 := lipgloss.NewStyle().Foreground(borderColor).Render("├" + strings.Repeat("─", col1W) + "┼" + strings.Repeat("─", col2W) + "┤")
 
-	// 6. Status Row - Dynamic labels
+	// 7. Status Row - Dynamic labels
 	sLeftStr := cellStyle.Render(fmt.Sprintf("%s: %s", frontendLabel, renderCheck(p.HasFrontend)))
 	sRightStr := cellStyleR.Render(fmt.Sprintf("%s: %s", backendLabel, renderCheck(p.HasBackend)))
 	statRow := lipgloss.NewStyle().Foreground(borderColor).Render("│") + sLeftStr + lipgloss.NewStyle().Foreground(borderColor).Render("│") + sRightStr + lipgloss.NewStyle().Foreground(borderColor).Render("│")
 
-	// 7. Docker Row (if exists)
+	// 8. Non-versioned tech rows (sadece "Var" olanlar - status satırının altına)
+	var nonVersionedTechRows []string
+	maxNonVersionedRows := len(frontendWithoutVersion)
+	if len(backendWithoutVersion) > maxNonVersionedRows {
+		maxNonVersionedRows = len(backendWithoutVersion)
+	}
+
+	for i := 0; i < maxNonVersionedRows; i++ {
+		var frontTechStr, backTechStr string
+		if i < len(frontendWithoutVersion) {
+			ft := frontendWithoutVersion[i]
+			frontTechStr = fmt.Sprintf("  %s %s: %s", getTechIcon(ft.Type), ft.Type, lipgloss.NewStyle().Foreground(ColorGreen).Render("✅ VAR"))
+		}
+		if i < len(backendWithoutVersion) {
+			bt := backendWithoutVersion[i]
+			backTechStr = fmt.Sprintf("  %s %s: %s", getTechIcon(bt.Type), bt.Type, lipgloss.NewStyle().Foreground(ColorGreen).Render("✅ VAR"))
+		}
+		leftCell := cellStyle.Render(frontTechStr)
+		rightCell := cellStyleR.Render(backTechStr)
+		row := lipgloss.NewStyle().Foreground(borderColor).Render("│") + leftCell + lipgloss.NewStyle().Foreground(borderColor).Render("│") + rightCell + lipgloss.NewStyle().Foreground(borderColor).Render("│")
+		nonVersionedTechRows = append(nonVersionedTechRows, row)
+	}
+
+	// 9. Docker Row (if exists)
 	var dockerRow string
 	var sep3 string
 	if p.HasDocker {
@@ -136,9 +250,40 @@ func (m *MainModel) actionsView() string {
 		dockerRow = lipgloss.NewStyle().Foreground(borderColor).Render("│") + dockerContent + lipgloss.NewStyle().Foreground(borderColor).Render("│")
 	}
 
-	// 8. Bottom Border
+	// 10. Monorepo alt projeleri (varsa)
+	var monorepoRows []string
+	var sep4 string
+	if p.IsMonorepo && (len(p.AllFrontends) > 1 || len(p.AllBackends) > 1) {
+		sep4 = lipgloss.NewStyle().Foreground(borderColor).Render("├" + strings.Repeat("─", innerW) + "┤")
+
+		// Başlık
+		monorepoHeader := fullRowStyle.Render(lipgloss.NewStyle().Foreground(ColorPurple).Bold(true).Render("📦 MONOREPO ALT PROJELERİ"))
+		monorepoRows = append(monorepoRows, lipgloss.NewStyle().Foreground(borderColor).Render("│")+monorepoHeader+lipgloss.NewStyle().Foreground(borderColor).Render("│"))
+
+		// Frontend alt projeleri
+		for i, sub := range p.AllFrontends {
+			prefix := "  "
+			if i == 0 {
+				prefix = "→ " // Ana proje
+			}
+			subStr := fullRowStyle.Render(fmt.Sprintf("%s%s %s: %s", prefix, getTechIcon(string(sub.Type)), sub.Name, ValueStyle.Render(sub.Version)))
+			monorepoRows = append(monorepoRows, lipgloss.NewStyle().Foreground(borderColor).Render("│")+subStr+lipgloss.NewStyle().Foreground(borderColor).Render("│"))
+		}
+
+		// Backend alt projeleri
+		for i, sub := range p.AllBackends {
+			prefix := "  "
+			if i == 0 {
+				prefix = "→ " // Ana proje
+			}
+			subStr := fullRowStyle.Render(fmt.Sprintf("%s%s %s: %s", prefix, getTechIcon(string(sub.Type)), sub.Name, ValueStyle.Render(sub.Version)))
+			monorepoRows = append(monorepoRows, lipgloss.NewStyle().Foreground(borderColor).Render("│")+subStr+lipgloss.NewStyle().Foreground(borderColor).Render("│"))
+		}
+	}
+
+	// 11. Bottom Border
 	var botBorder string
-	if p.HasDocker {
+	if p.HasDocker || len(monorepoRows) > 0 {
 		botBorder = lipgloss.NewStyle().Foreground(borderColor).Render("└" + strings.Repeat("─", innerW) + "┘")
 	} else {
 		botBorder = lipgloss.NewStyle().Foreground(borderColor).Render("└" + strings.Repeat("─", col1W) + "┴" + strings.Repeat("─", col2W) + "┘")
@@ -146,9 +291,33 @@ func (m *MainModel) actionsView() string {
 
 	// Assemble
 	var boxParts []string
-	boxParts = append(boxParts, topBorder, nameRow, sep1, verRow, sep2, statRow)
+	boxParts = append(boxParts, topBorder, nameRow, sep1, verRow)
+	// Sürümü olan teknolojiler (versiyon satırı altına)
+	for _, row := range versionedTechRows {
+		boxParts = append(boxParts, row)
+	}
+	boxParts = append(boxParts, sep2, statRow)
+	// Sürümü olmayan teknolojiler (status satırı altına)
+	for _, row := range nonVersionedTechRows {
+		boxParts = append(boxParts, row)
+	}
 	if p.HasDocker {
 		boxParts = append(boxParts, sep3, dockerRow)
+	}
+	// Port uyarıları
+	if len(p.PortWarnings) > 0 {
+		sep5 := lipgloss.NewStyle().Foreground(borderColor).Render("├" + strings.Repeat("─", innerW) + "┤")
+		boxParts = append(boxParts, sep5)
+		for _, warning := range p.PortWarnings {
+			warningContent := fullRowStyle.Render(lipgloss.NewStyle().Foreground(ColorYellow).Render(warning))
+			warningRow := lipgloss.NewStyle().Foreground(borderColor).Render("│") + warningContent + lipgloss.NewStyle().Foreground(borderColor).Render("│")
+			boxParts = append(boxParts, warningRow)
+		}
+	}
+	// Monorepo alt projeleri
+	if len(monorepoRows) > 0 {
+		boxParts = append(boxParts, sep4)
+		boxParts = append(boxParts, monorepoRows...)
 	}
 	boxParts = append(boxParts, botBorder)
 
@@ -181,7 +350,25 @@ func (m *MainModel) actionsView() string {
 		b.WriteString("[5] 🧬  AI Context (Ağacı Kopyala)\n")
 	}
 
-	b.WriteString("[6] 🩺  Dependency Doctor (Paket Güncelle)\n\n")
+	b.WriteString("[6] 🩺  Dependency Doctor (Paket Güncelle)\n")
+	b.WriteString("[H] 🏥  Sağlık Skoru Hesapla\n")
+
+	if m.Selected.HasPrisma {
+		b.WriteString("[F1] ◮  Prisma Studio\n")
+	}
+	if m.Selected.HasDrizzle {
+		b.WriteString("[F2] 🌧️  Drizzle Studio\n")
+	}
+	if m.Selected.HasHasura {
+		b.WriteString("[F3] 🦅  Hasura Console\n")
+	}
+	if m.Selected.HasSupabase {
+		b.WriteString("[F4] ⚡  Supabase Status\n")
+	}
+	if m.Selected.HasStorybook {
+		b.WriteString("[F5] 📕  Storybook (UI Dev)\n")
+	}
+	b.WriteString("\n")
 
 	// Seçenekleri bitir ve input satırını ekle
 

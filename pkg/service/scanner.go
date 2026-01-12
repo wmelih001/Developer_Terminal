@@ -2,10 +2,12 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"devterminal/pkg/domain"
 )
@@ -39,8 +41,875 @@ type TechSignature struct {
 	CheckFunc  func(path string) (bool, string) // Returns (found, version)
 }
 
-// ScanProjects scans all configured paths for projects
+// ProjectCache cache yapısı
+type ProjectCache struct {
+	Projects     []domain.Project `json:"projects"`
+	Timestamp    int64            `json:"timestamp"`
+	RootPath     string           `json:"root_path"`
+	RootModTimes map[string]int64 `json:"root_mod_times"`
+}
+
+// TODO: Cache dosya yolu dinamik olmalı (örn: user home altında)
+const cacheFileName = ".devterminal_cache.json"
+
+// loadCache cache'den projeleri yükler
+func (s *Scanner) loadCache(rootPath string) ([]domain.Project, bool) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, false
+	}
+	cachePath := filepath.Join(homeDir, cacheFileName)
+
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil, false
+	}
+
+	var cache ProjectCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil, false
+	}
+
+	// Root path (bileşimi) değiştiyse cache geçersiz
+	if cache.RootPath != rootPath {
+		return nil, false
+	}
+
+	// Klasör modification time kontrolü ile akıllı invalidation
+	// Eğer projelerin bulunduğu ana klasörde değişiklik varsa (yeni proje eklendi/silindi vb.)
+	// cache geçersiz sayılmalı.
+	if len(cache.RootModTimes) == 0 {
+		return nil, false // Eski format cache ise yenile
+	}
+
+	for _, path := range s.Config.ProjectsPaths {
+		if info, err := os.Stat(path); err == nil {
+			currentModTime := info.ModTime().Unix()
+			if cachedTime, ok := cache.RootModTimes[path]; !ok || cachedTime != currentModTime {
+				return nil, false // Değişiklik var, yeniden tara
+			}
+		}
+	}
+
+	return cache.Projects, true
+}
+
+// saveCache projeleri cache'e kaydeder
+func (s *Scanner) saveCache(rootPath string, projects []domain.Project) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	cachePath := filepath.Join(homeDir, cacheFileName)
+
+	// Kök klasörlerin mod time'larını al
+	modTimes := make(map[string]int64)
+	for _, path := range s.Config.ProjectsPaths {
+		if info, err := os.Stat(path); err == nil {
+			modTimes[path] = info.ModTime().Unix()
+		}
+	}
+
+	cache := ProjectCache{
+		Projects:     projects,
+		Timestamp:    time.Now().Unix(),
+		RootPath:     rootPath,
+		RootModTimes: modTimes,
+	}
+
+	data, _ := json.Marshal(cache)
+	_ = os.WriteFile(cachePath, data, 0644)
+}
+
+// Klasör adı bazlı ipuçları
+var frontendFolderHints = []string{
+	"frontend", "client", "web", "app", "ui",
+	"next", "react", "vue", "dashboard", "portal",
+	"website", "site", "front", "www",
+}
+
+var backendFolderHints = []string{
+	"backend", "api", "server", "service", "services",
+	"nest", "express", "core", "gateway", "microservice",
+	"rest", "graphql", "api-server", "back",
+}
+
+// isFrontendFolderName klasör adının frontend ipucu verip vermediğini kontrol eder
+func isFrontendFolderName(folderName string) bool {
+	name := strings.ToLower(folderName)
+	for _, hint := range frontendFolderHints {
+		if name == hint || strings.Contains(name, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+// isBackendFolderName klasör adının backend ipucu verip vermediğini kontrol eder
+func isBackendFolderName(folderName string) bool {
+	name := strings.ToLower(folderName)
+	for _, hint := range backendFolderHints {
+		if name == hint || strings.Contains(name, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+// Monorepo klasör desenleri
+var monorepoFolderPatterns = []string{
+	"apps",
+	"packages",
+	"services",
+	"libs",
+	"modules",
+	"workspaces",
+}
+
+// isMonorepoFolder klasörün monorepo yapısında olup olmadığını kontrol eder
+func isMonorepoFolder(folderName string) bool {
+	name := strings.ToLower(folderName)
+	for _, pattern := range monorepoFolderPatterns {
+		if name == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+// hasMonorepoStructure projenin monorepo yapısında olup olmadığını kontrol eder
+func hasMonorepoStructure(projectPath string) bool {
+	entries, err := os.ReadDir(projectPath)
+	if err != nil {
+		return false
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() && isMonorepoFolder(entry.Name()) {
+			return true
+		}
+	}
+
+	// pnpm-workspace.yaml veya lerna.json varsa monorepo
+	if _, err := os.Stat(filepath.Join(projectPath, "pnpm-workspace.yaml")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, "lerna.json")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, "turbo.json")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, "nx.json")); err == nil {
+		return true
+	}
+
+	return false
+}
+
+// Dosya yapısı bazlı backend sinyalleri
+var backendStructureSignals = []string{
+	"controllers",
+	"routes",
+	"services",
+	"prisma",
+	"migrations",
+	"models",
+	"middleware",
+	"middlewares",
+	"guards",
+	"interceptors",
+	"pipes",
+	"decorators",
+	"entities",
+	"repositories",
+	"dto",
+	"schemas",
+}
+
+// Dosya yapısı bazlı frontend sinyalleri
+var frontendStructureSignals = []string{
+	"components",
+	"pages",
+	"app",
+	"public",
+	"styles",
+	"css",
+	"assets",
+	"hooks",
+	"contexts",
+	"store",
+	"redux",
+	"views",
+	"layouts",
+}
+
+// hasBackendStructure klasör içinde backend yapısı olup olmadığını kontrol eder
+func hasBackendStructure(path string) bool {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false
+	}
+
+	// src/ klasörü varsa, onu da kontrol et
+	srcPath := filepath.Join(path, "src")
+	srcEntries, srcErr := os.ReadDir(srcPath)
+
+	// Her iki kaynaktan gelen klasörleri birleştir
+	allDirs := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			allDirs[strings.ToLower(entry.Name())] = true
+		}
+	}
+	if srcErr == nil {
+		for _, entry := range srcEntries {
+			if entry.IsDir() {
+				allDirs[strings.ToLower(entry.Name())] = true
+			}
+		}
+	}
+
+	// Backend sinyallerini kontrol et
+	signalCount := 0
+	for _, signal := range backendStructureSignals {
+		if allDirs[signal] {
+			signalCount++
+		}
+	}
+
+	// En az 2 sinyal varsa backend olarak kabul et
+	return signalCount >= 2
+}
+
+// hasFrontendStructure klasör içinde frontend yapısı olup olmadığını kontrol eder
+func hasFrontendStructure(path string) bool {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false
+	}
+
+	// src/ klasörü varsa, onu da kontrol et
+	srcPath := filepath.Join(path, "src")
+	srcEntries, srcErr := os.ReadDir(srcPath)
+
+	// Her iki kaynaktan gelen klasörleri birleştir
+	allDirs := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			allDirs[strings.ToLower(entry.Name())] = true
+		}
+	}
+	if srcErr == nil {
+		for _, entry := range srcEntries {
+			if entry.IsDir() {
+				allDirs[strings.ToLower(entry.Name())] = true
+			}
+		}
+	}
+
+	// Frontend sinyallerini kontrol et
+	signalCount := 0
+	for _, signal := range frontendStructureSignals {
+		if allDirs[signal] {
+			signalCount++
+		}
+	}
+
+	// En az 2 sinyal varsa frontend olarak kabul et
+	return signalCount >= 2
+}
+
+// Dependency bazlı backend sinyalleri (package.json dependencies)
+var backendDependencySignals = []string{
+	// Server/API
+	"cors",
+	"helmet",
+	"cookie-parser",
+	"body-parser",
+	"compression",
+	"morgan",
+	"winston",
+	// Auth
+	"jsonwebtoken",
+	"bcrypt",
+	"bcryptjs",
+	"passport",
+	"passport-jwt",
+	// Database
+	"prisma",
+	"@prisma/client",
+	"typeorm",
+	"sequelize",
+	"mongoose",
+	"pg",
+	"mysql2",
+	"mongodb",
+	"redis",
+	"ioredis",
+	// Validation
+	"class-validator",
+	"class-transformer",
+	"joi",
+	"yup",
+	// Queue/Messaging
+	"bull",
+	"amqplib",
+	"kafkajs",
+}
+
+// Dependency bazlı frontend sinyalleri (package.json dependencies)
+var frontendDependencySignals = []string{
+	// Styling
+	"tailwindcss",
+	"sass",
+	"styled-components",
+	"@emotion/react",
+	"@emotion/styled",
+	// Animation
+	"framer-motion",
+	"gsap",
+	"animate.css",
+	// UI Libraries
+	"@mui/material",
+	"@chakra-ui/react",
+	"antd",
+	"@radix-ui/react-dialog",
+	"shadcn",
+	// State Management (Frontend specific)
+	"zustand",
+	"recoil",
+	"jotai",
+	"@tanstack/react-query",
+	"swr",
+	// Form
+	"react-hook-form",
+	"formik",
+	// Icons
+	"lucide-react",
+	"react-icons",
+	"@heroicons/react",
+	// Charts
+	"recharts",
+	"chart.js",
+	"react-chartjs-2",
+}
+
+// hasBackendDependencies package.json içinde backend dependency'leri olup olmadığını kontrol eder
+func (s *Scanner) hasBackendDependencies(path string) bool {
+	pkgPath := filepath.Join(path, "package.json")
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return false
+	}
+
+	var pkg packageJSON
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return false
+	}
+
+	// Tüm dependency'leri birleştir
+	allDeps := make(map[string]bool)
+	for dep := range pkg.Dependencies {
+		allDeps[dep] = true
+	}
+	for dep := range pkg.DevDependencies {
+		allDeps[dep] = true
+	}
+
+	// Backend sinyallerini say
+	signalCount := 0
+	for _, signal := range backendDependencySignals {
+		if allDeps[signal] {
+			signalCount++
+		}
+	}
+
+	// En az 2 backend dependency varsa backend olarak kabul et
+	return signalCount >= 2
+}
+
+// hasFrontendDependencies package.json içinde frontend dependency'leri olup olmadığını kontrol eder
+func (s *Scanner) hasFrontendDependencies(path string) bool {
+	pkgPath := filepath.Join(path, "package.json")
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return false
+	}
+
+	var pkg packageJSON
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return false
+	}
+
+	// Tüm dependency'leri birleştir
+	allDeps := make(map[string]bool)
+	for dep := range pkg.Dependencies {
+		allDeps[dep] = true
+	}
+	for dep := range pkg.DevDependencies {
+		allDeps[dep] = true
+	}
+
+	// Frontend sinyallerini say
+	signalCount := 0
+	for _, signal := range frontendDependencySignals {
+		if allDeps[signal] {
+			signalCount++
+		}
+	}
+
+	// En az 2 frontend dependency varsa frontend olarak kabul et
+	return signalCount >= 2
+}
+
+// .env dosyasındaki backend sinyalleri
+var backendEnvSignals = []string{
+	// Database
+	"DATABASE_URL",
+	"DB_HOST",
+	"DB_PORT",
+	"DB_NAME",
+	"DB_USER",
+	"DB_PASSWORD",
+	"MONGODB_URI",
+	"MONGO_URL",
+	"REDIS_URL",
+	"REDIS_HOST",
+	// Auth
+	"JWT_SECRET",
+	"JWT_EXPIRES_IN",
+	"ACCESS_TOKEN_SECRET",
+	"REFRESH_TOKEN_SECRET",
+	"SESSION_SECRET",
+	// API
+	"API_PORT",
+	"PORT",
+	"API_KEY",
+	"SECRET_KEY",
+	// Email
+	"SMTP_HOST",
+	"SMTP_PORT",
+	"MAIL_HOST",
+	"SENDGRID_API_KEY",
+	// Cloud
+	"AWS_ACCESS_KEY",
+	"AWS_SECRET_KEY",
+	"S3_BUCKET",
+	"CLOUDINARY_URL",
+}
+
+// .env dosyasındaki frontend sinyalleri
+var frontendEnvSignals = []string{
+	// Next.js public vars
+	"NEXT_PUBLIC_",
+	"NEXT_PUBLIC_API_URL",
+	"NEXT_PUBLIC_APP_URL",
+	// Vite public vars
+	"VITE_",
+	"VITE_API_URL",
+	"VITE_APP_URL",
+	// React public vars
+	"REACT_APP_",
+	"REACT_APP_API_URL",
+	// Analytics
+	"NEXT_PUBLIC_GA_ID",
+	"NEXT_PUBLIC_ANALYTICS",
+}
+
+// hasBackendEnvConfig .env dosyasında backend config'leri olup olmadığını kontrol eder
+func hasBackendEnvConfig(path string) bool {
+	envFiles := []string{".env", ".env.local", ".env.development", ".env.example"}
+
+	for _, envFile := range envFiles {
+		envPath := filepath.Join(path, envFile)
+		data, err := os.ReadFile(envPath)
+		if err != nil {
+			continue
+		}
+
+		content := string(data)
+		signalCount := 0
+
+		for _, signal := range backendEnvSignals {
+			if strings.Contains(content, signal) {
+				signalCount++
+			}
+		}
+
+		// En az 2 backend env var varsa backend olarak kabul et
+		if signalCount >= 2 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasFrontendEnvConfig .env dosyasında frontend config'leri olup olmadığını kontrol eder
+func hasFrontendEnvConfig(path string) bool {
+	envFiles := []string{".env", ".env.local", ".env.development", ".env.example"}
+
+	for _, envFile := range envFiles {
+		envPath := filepath.Join(path, envFile)
+		data, err := os.ReadFile(envPath)
+		if err != nil {
+			continue
+		}
+
+		content := string(data)
+
+		// Frontend prefix'lerini kontrol et (NEXT_PUBLIC_, VITE_, REACT_APP_)
+		for _, signal := range frontendEnvSignals {
+			if strings.Contains(content, signal) {
+				return true // Tek bir frontend prefix bile yeterli
+			}
+		}
+	}
+
+	return false
+}
+
+// ============================================
+// AKILLI VERSİYON TESPİTİ FONKSİYONLARI
+// ============================================
+
+// getGoVersion go.mod dosyasından Go versiyonunu okur
+func getGoVersion(path string) string {
+	goModPath := filepath.Join(path, "go.mod")
+	data, err := os.ReadFile(goModPath)
+	if err != nil {
+		return ""
+	}
+
+	content := string(data)
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "go ") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				return parts[1] // "go 1.21" -> "1.21"
+			}
+		}
+	}
+	return ""
+}
+
+// getPythonVersion Python versiyonunu çeşitli kaynaklardan okur
+func getPythonVersion(path string) string {
+	// 1. .python-version dosyası (pyenv)
+	pyenvPath := filepath.Join(path, ".python-version")
+	if data, err := os.ReadFile(pyenvPath); err == nil {
+		ver := strings.TrimSpace(string(data))
+		if ver != "" {
+			return ver
+		}
+	}
+
+	// 2. runtime.txt dosyası (Heroku)
+	runtimePath := filepath.Join(path, "runtime.txt")
+	if data, err := os.ReadFile(runtimePath); err == nil {
+		content := strings.TrimSpace(string(data))
+		// python-3.11.0 -> 3.11.0
+		if strings.HasPrefix(content, "python-") {
+			return strings.TrimPrefix(content, "python-")
+		}
+		return content
+	}
+
+	// 3. pyproject.toml dosyası
+	pyprojectPath := filepath.Join(path, "pyproject.toml")
+	if data, err := os.ReadFile(pyprojectPath); err == nil {
+		content := string(data)
+		// python = "^3.11" veya requires-python = ">=3.11"
+		lines := strings.Split(content, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "python") && strings.Contains(line, "=") {
+				// Basit regex yerine string işleme
+				if idx := strings.Index(line, "\""); idx != -1 {
+					rest := line[idx+1:]
+					if endIdx := strings.Index(rest, "\""); endIdx != -1 {
+						ver := rest[:endIdx]
+						ver = strings.TrimPrefix(ver, "^")
+						ver = strings.TrimPrefix(ver, ">=")
+						ver = strings.TrimPrefix(ver, "~")
+						return ver
+					}
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// getNodeVersion Node.js versiyonunu çeşitli kaynaklardan okur
+func (s *Scanner) getNodeVersion(path string) string {
+	// 1. .nvmrc dosyası
+	nvmrcPath := filepath.Join(path, ".nvmrc")
+	if data, err := os.ReadFile(nvmrcPath); err == nil {
+		ver := strings.TrimSpace(string(data))
+		ver = strings.TrimPrefix(ver, "v")
+		if ver != "" {
+			return ver
+		}
+	}
+
+	// 2. .node-version dosyası
+	nodeVerPath := filepath.Join(path, ".node-version")
+	if data, err := os.ReadFile(nodeVerPath); err == nil {
+		ver := strings.TrimSpace(string(data))
+		ver = strings.TrimPrefix(ver, "v")
+		if ver != "" {
+			return ver
+		}
+	}
+
+	// 3. package.json engines alanı
+	pkgPath := filepath.Join(path, "package.json")
+	if data, err := os.ReadFile(pkgPath); err == nil {
+		var pkg struct {
+			Engines struct {
+				Node string `json:"node"`
+			} `json:"engines"`
+		}
+		if err := json.Unmarshal(data, &pkg); err == nil && pkg.Engines.Node != "" {
+			ver := pkg.Engines.Node
+			// ">=18.0.0" -> "18.0.0"
+			ver = strings.TrimPrefix(ver, ">=")
+			ver = strings.TrimPrefix(ver, "^")
+			ver = strings.TrimPrefix(ver, "~")
+			ver = strings.TrimPrefix(ver, "v")
+			// "18.x" veya "18" olabilir
+			return ver
+		}
+	}
+
+	return ""
+}
+
+// getDockerBaseImage Dockerfile'dan base image bilgisini okur
+func getDockerBaseImage(path string) string {
+	dockerfilePath := filepath.Join(path, "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		return ""
+	}
+
+	content := string(data)
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToUpper(line), "FROM ") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				image := parts[1]
+				// node:18-alpine -> node:18-alpine
+				// Sadece ilk FROM'u al (multi-stage build için)
+				return image
+			}
+		}
+	}
+	return ""
+}
+
+// ============================================
+// PROJE SAĞLIK SKORU HESAPLAMA
+// ============================================
+
+// calculateHealthScore proje sağlık skorunu hesaplar (0-100)
+func (s *Scanner) calculateHealthScore(projectPath string, p *domain.Project) {
+	// Use the unified HealthService to avoid inconsistencies
+	hs := NewHealthService()
+	report := hs.CheckHealth(projectPath)
+
+	p.HealthScore = report.Score
+	p.HealthDetails = report.PassedItems
+}
+
+// checkCustomRules kullanıcı tanımlı kuralları kontrol eder
+func (s *Scanner) checkCustomRules(projectPath string, p *domain.Project) {
+	if s.Config == nil || len(s.Config.CustomRules) == 0 {
+		return
+	}
+
+	for _, rule := range s.Config.CustomRules {
+		matched := false
+
+		// 1. Klasör adı kontrolü
+		for _, folder := range rule.Folders {
+			if strings.EqualFold(filepath.Base(projectPath), folder) {
+				matched = true
+				break
+			}
+		}
+
+		// 2. Dosya varlık kontrolü
+		if !matched && len(rule.Files) > 0 {
+			for _, file := range rule.Files {
+				if _, err := os.Stat(filepath.Join(projectPath, file)); err == nil {
+					matched = true
+					break
+				}
+			}
+		}
+
+		// 3. Dependency kontrolü
+		if !matched && len(rule.Dependencies) > 0 {
+			pkgPath := filepath.Join(projectPath, "package.json")
+			if data, err := os.ReadFile(pkgPath); err == nil {
+				var pkg packageJSON
+				if err := json.Unmarshal(data, &pkg); err == nil {
+					for _, dep := range rule.Dependencies {
+						if _, ok := pkg.Dependencies[dep]; ok {
+							matched = true
+							break
+						}
+						if _, ok := pkg.DevDependencies[dep]; ok {
+							matched = true
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// Eğer kural eşleşti ise, projeye ekle
+		if matched {
+			customType := domain.ProjectType(rule.Name)
+			if rule.Type == "frontend" && !p.HasFrontend {
+				p.HasFrontend = true
+				p.FrontendType = customType
+				p.FrontendVer = "Custom"
+				p.FrontendPath = projectPath
+				p.FrontendCmd = s.detectStartCommand(projectPath, true, false)
+			} else if rule.Type == "backend" && !p.HasBackend {
+				p.HasBackend = true
+				p.BackendType = customType
+				p.BackendVer = "Custom"
+				p.BackendPath = projectPath
+				p.BackendCmd = s.detectStartCommand(projectPath, false, true)
+			}
+		}
+	}
+}
+func (s *Scanner) scanMonorepo(projectPath string, p *domain.Project) {
+	entries, err := os.ReadDir(projectPath)
+	if err != nil {
+		return
+	}
+
+	frontendSigs := s.getFrontendSignatures()
+	backendSigs := s.getBackendSignatures()
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Monorepo klasörlerini bul (apps/, packages/, services/)
+		if isMonorepoFolder(entry.Name()) {
+			monorepoPath := filepath.Join(projectPath, entry.Name())
+			subEntries, err := os.ReadDir(monorepoPath)
+			if err != nil {
+				continue
+			}
+
+			// Her alt klasörü tara
+			for _, subEntry := range subEntries {
+				if !subEntry.IsDir() {
+					continue
+				}
+
+				subPath := filepath.Join(monorepoPath, subEntry.Name())
+				subName := subEntry.Name()
+
+				// Skip common non-project directories
+				name := strings.ToLower(subName)
+				if name == "node_modules" || name == ".git" || name == "dist" || name == "build" || name == ".next" {
+					continue
+				}
+
+				// Frontend kontrolü
+				for _, sig := range frontendSigs {
+					if found, ver := sig.CheckFunc(subPath); found {
+						subProject := domain.SubProject{
+							Name:       subName,
+							Path:       subPath,
+							Type:       sig.Type,
+							Version:    ver,
+							StartCmd:   s.detectStartCommand(subPath, true, false),
+							IsFrontend: true,
+						}
+						if subProject.Version == "" {
+							subProject.Version = "Var"
+						}
+						p.AllFrontends = append(p.AllFrontends, subProject)
+						break
+					}
+				}
+
+				// Backend kontrolü
+				for _, sig := range backendSigs {
+					if found, ver := sig.CheckFunc(subPath); found {
+						subProject := domain.SubProject{
+							Name:       subName,
+							Path:       subPath,
+							Type:       sig.Type,
+							Version:    ver,
+							StartCmd:   s.detectStartCommand(subPath, false, true),
+							IsFrontend: false,
+						}
+						if subProject.Version == "" {
+							subProject.Version = "Var"
+						}
+						p.AllBackends = append(p.AllBackends, subProject)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Monorepo olarak işaretle
+	if len(p.AllFrontends) > 0 || len(p.AllBackends) > 0 {
+		p.IsMonorepo = true
+
+		// Ana frontend/backend'i ayarla (ilk bulunan)
+		if len(p.AllFrontends) > 0 && !p.HasFrontend {
+			first := p.AllFrontends[0]
+			p.HasFrontend = true
+			p.FrontendType = first.Type
+			p.FrontendVer = first.Version
+			p.FrontendPath = first.Path
+			p.FrontendCmd = first.StartCmd
+		}
+		if len(p.AllBackends) > 0 && !p.HasBackend {
+			first := p.AllBackends[0]
+			p.HasBackend = true
+			p.BackendType = first.Type
+			p.BackendVer = first.Version
+			p.BackendPath = first.Path
+			p.BackendCmd = first.StartCmd
+		}
+	}
+}
+
 func (s *Scanner) ScanProjects() []domain.Project {
+	// Cache Key: Proje yollarının birleşimi
+	cacheKey := strings.Join(s.Config.ProjectsPaths, "|")
+
+	// 1. Cache Kontrolü
+	if projects, ok := s.loadCache(cacheKey); ok {
+		// Cache'den gelse bile sağlık skorunu güncel mantıkla tekrar hesapla
+		for i := range projects {
+			s.calculateHealthScore(projects[i].Path, &projects[i])
+			s.checkTools(projects[i].Path, &projects[i])
+		}
+		return projects
+	}
+
 	var allProjects []domain.Project
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -68,7 +937,18 @@ func (s *Scanner) ScanProjects() []domain.Project {
 		}(path)
 	}
 	wg.Wait()
+
+	// 2. Cache Kaydetme
+	s.saveCache(cacheKey, allProjects)
+
 	return allProjects
+}
+
+// ClearCache cache dosyasını siler (Manuel yenileme için)
+func (s *Scanner) ClearCache() {
+	homeDir, _ := os.UserHomeDir()
+	cachePath := filepath.Join(homeDir, cacheFileName)
+	_ = os.Remove(cachePath)
 }
 
 // getFrontendSignatures returns all frontend technology signatures
@@ -129,6 +1009,48 @@ func (s *Scanner) getFrontendSignatures() []TechSignature {
 			}
 			return false, ""
 		}},
+		// Angular
+		{Type: domain.TypeAngular, IsFrontend: true, CheckFunc: func(path string) (bool, string) {
+			ver := s.getPackageVersion(path, "@angular/core")
+			return ver != "", ver
+		}},
+		// Svelte
+		{Type: domain.TypeSvelte, IsFrontend: true, CheckFunc: func(path string) (bool, string) {
+			ver := s.getPackageVersion(path, "svelte")
+			return ver != "", ver
+		}},
+		// SolidJS
+		{Type: domain.TypeSolidJS, IsFrontend: true, CheckFunc: func(path string) (bool, string) {
+			ver := s.getPackageVersion(path, "solid-js")
+			return ver != "", ver
+		}},
+		// Astro
+		{Type: domain.TypeAstro, IsFrontend: true, CheckFunc: func(path string) (bool, string) {
+			ver := s.getPackageVersion(path, "astro")
+			return ver != "", ver
+		}},
+		// Remix
+		{Type: domain.TypeRemix, IsFrontend: true, CheckFunc: func(path string) (bool, string) {
+			ver := s.getPackageVersion(path, "@remix-run/react")
+			return ver != "", ver
+		}},
+		// Nuxt
+		{Type: domain.TypeNuxt, IsFrontend: true, CheckFunc: func(path string) (bool, string) {
+			ver := s.getPackageVersion(path, "nuxt")
+			return ver != "", ver
+		}},
+		// Flutter
+		{Type: domain.TypeFlutter, IsFrontend: true, CheckFunc: func(path string) (bool, string) {
+			if _, err := os.Stat(filepath.Join(path, "pubspec.yaml")); err == nil {
+				return true, "Var"
+			}
+			return false, ""
+		}},
+		// Expo
+		{Type: domain.TypeExpo, IsFrontend: true, CheckFunc: func(path string) (bool, string) {
+			ver := s.getPackageVersion(path, "expo")
+			return ver != "", ver
+		}},
 		// HTML (Static Website)
 		{Type: domain.TypeHTML, IsFrontend: true, CheckFunc: func(path string) (bool, string) {
 			// Check for index.html - indicates static HTML project
@@ -181,14 +1103,22 @@ func (s *Scanner) getBackendSignatures() []TechSignature {
 		// Go
 		{Type: domain.TypeGo, IsFrontend: false, CheckFunc: func(path string) (bool, string) {
 			if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
-				return true, "Var"
+				ver := getGoVersion(path)
+				if ver == "" {
+					ver = "Var"
+				}
+				return true, ver
 			}
 			return false, ""
 		}},
 		// Django
 		{Type: domain.TypeDjango, IsFrontend: false, CheckFunc: func(path string) (bool, string) {
 			if _, err := os.Stat(filepath.Join(path, "manage.py")); err == nil {
-				return true, "Var"
+				ver := getPythonVersion(path)
+				if ver == "" {
+					ver = "Var"
+				}
+				return true, ver
 			}
 			return false, ""
 		}},
@@ -209,7 +1139,11 @@ func (s *Scanner) getBackendSignatures() []TechSignature {
 			reqPath := filepath.Join(path, "requirements.txt")
 			if data, err := os.ReadFile(reqPath); err == nil {
 				if strings.Contains(strings.ToLower(string(data)), "flask") {
-					return true, "Var"
+					ver := getPythonVersion(path)
+					if ver == "" {
+						ver = "Var"
+					}
+					return true, ver
 				}
 			}
 			return false, ""
@@ -249,6 +1183,55 @@ func (s *Scanner) getBackendSignatures() []TechSignature {
 			}
 			return false, ""
 		}},
+		// FastAPI (Python)
+		{Type: domain.TypeFastAPI, IsFrontend: false, CheckFunc: func(path string) (bool, string) {
+			reqPath := filepath.Join(path, "requirements.txt")
+			if data, err := os.ReadFile(reqPath); err == nil {
+				if strings.Contains(strings.ToLower(string(data)), "fastapi") {
+					ver := getPythonVersion(path)
+					if ver == "" {
+						ver = "Var"
+					}
+					return true, ver
+				}
+			}
+			// pyproject.toml kontrolü
+			pyprojectPath := filepath.Join(path, "pyproject.toml")
+			if data, err := os.ReadFile(pyprojectPath); err == nil {
+				if strings.Contains(strings.ToLower(string(data)), "fastapi") {
+					ver := getPythonVersion(path)
+					if ver == "" {
+						ver = "Var"
+					}
+					return true, ver
+				}
+			}
+			return false, ""
+		}},
+		// Fiber (Go)
+		{Type: domain.TypeFiber, IsFrontend: false, CheckFunc: func(path string) (bool, string) {
+			goModPath := filepath.Join(path, "go.mod")
+			if data, err := os.ReadFile(goModPath); err == nil {
+				if strings.Contains(string(data), "github.com/gofiber/fiber") {
+					ver := getGoVersion(path)
+					if ver == "" {
+						ver = "Var"
+					}
+					return true, ver
+				}
+			}
+			return false, ""
+		}},
+		// Hono
+		{Type: domain.TypeHono, IsFrontend: false, CheckFunc: func(path string) (bool, string) {
+			ver := s.getPackageVersion(path, "hono")
+			return ver != "", ver
+		}},
+		// Koa
+		{Type: domain.TypeKoa, IsFrontend: false, CheckFunc: func(path string) (bool, string) {
+			ver := s.getPackageVersion(path, "koa")
+			return ver != "", ver
+		}},
 	}
 }
 
@@ -284,25 +1267,49 @@ func (s *Scanner) scanDirectory(root string) []domain.Project {
 		s.scanSubdirectories(fullPath, &p)
 
 		// ========================================
-		// ADIM 2: Root dizini tara (Monorepo olmayan projeler)
+		// ADIM 2: Monorepo kontrolü
+		// ========================================
+		if hasMonorepoStructure(fullPath) {
+			s.scanMonorepo(fullPath, &p)
+		}
+
+		// ========================================
+		// ADIM 3: Root dizini tara (Monorepo olmayan projeler)
 		// ========================================
 		if !p.HasFrontend && !p.HasBackend {
 			s.scanRootDirectory(fullPath, &p)
 		}
 
 		// ========================================
-		// ADIM 3: Tip Belirleme
+		// ADIM 4: Custom Rule Kontrolü
+		// ========================================
+		s.checkCustomRules(fullPath, &p)
+
+		// ========================================
+		// ADIM 5: Tip Belirleme
 		// ========================================
 		s.determineProjectType(&p)
 
 		// ========================================
-		// ADIM 4: Sadece proje olarak algılananları ekle
+		// ADIM 6: Sadece proje olarak algılananları ekle
 		// ========================================
 		isProject := p.HasFrontend || p.HasBackend || p.HasDocker ||
 			p.Type != domain.TypeUnknown ||
 			p.FrontendType != "" || p.BackendType != ""
 
 		if isProject {
+			// Sağlık skoru hesapla
+			s.calculateHealthScore(fullPath, &p)
+
+			// Araç kontrolü (Prisma, Drizzle, vb.)
+			s.checkTools(fullPath, &p)
+
+			// Port kontrolü yap
+			portInfos := CheckProjectPorts(p.HasFrontend, p.HasBackend)
+			for _, info := range portInfos {
+				p.PortWarnings = append(p.PortWarnings, FormatPortWarning(info))
+			}
+
 			results = append(results, p)
 		}
 	}
@@ -332,25 +1339,14 @@ func (s *Scanner) scanSubdirectories(projectPath string, p *domain.Project) {
 			continue
 		}
 
-		// Check for Frontend signatures
-		if !p.HasFrontend {
-			for _, sig := range frontendSigs {
-				if found, ver := sig.CheckFunc(subPath); found {
-					p.HasFrontend = true
-					p.FrontendPath = subPath
-					p.FrontendVer = ver
-					p.FrontendType = sig.Type
-					if p.FrontendVer == "" {
-						p.FrontendVer = "Var"
-					}
-					p.FrontendCmd = s.detectStartCommand(subPath)
-					break
-				}
-			}
-		}
+		// Klasör adı ipuçlarını kontrol et
+		isFrontendHint := isFrontendFolderName(entry.Name())
+		isBackendHint := isBackendFolderName(entry.Name())
 
-		// Check for Backend signatures
-		if !p.HasBackend {
+		// Eğer klasör adı backend ipucu veriyorsa, önce backend'i kontrol et
+		if isBackendHint && !p.HasBackend {
+			// Önce backend imzalarını kontrol et
+			foundBackend := false
 			for _, sig := range backendSigs {
 				if found, ver := sig.CheckFunc(subPath); found {
 					p.HasBackend = true
@@ -360,8 +1356,167 @@ func (s *Scanner) scanSubdirectories(projectPath string, p *domain.Project) {
 					if p.BackendVer == "" {
 						p.BackendVer = "Var"
 					}
-					p.BackendCmd = s.detectStartCommand(subPath)
+					p.BackendCmd = s.detectStartCommand(subPath, false, true)
+					foundBackend = true
 					break
+				}
+			}
+
+			// Eğer spesifik teknoloji bulunamadıysa ama klasör adı backend ipucu veriyorsa
+			// ve içinde package.json veya go.mod varsa VEYA backend yapısı/dependency'leri varsa, genel backend olarak işaretle
+			if !foundBackend {
+				hasPackageJSON := false
+				if _, err := os.Stat(filepath.Join(subPath, "package.json")); err == nil {
+					hasPackageJSON = true
+				}
+				hasGoMod := false
+				if _, err := os.Stat(filepath.Join(subPath, "go.mod")); err == nil {
+					hasGoMod = true
+				}
+				hasPythonFiles := false
+				if _, err := os.Stat(filepath.Join(subPath, "requirements.txt")); err == nil {
+					hasPythonFiles = true
+				}
+				if _, err := os.Stat(filepath.Join(subPath, "pyproject.toml")); err == nil {
+					hasPythonFiles = true
+				}
+
+				// Dosya yapısı analizi
+				hasBackendStruct := hasBackendStructure(subPath)
+
+				// Dependency analizi
+				hasBackendDeps := s.hasBackendDependencies(subPath)
+
+				// Env config analizi
+				hasBackendEnv := hasBackendEnvConfig(subPath)
+
+				if hasPackageJSON || hasGoMod || hasPythonFiles || hasBackendStruct || hasBackendDeps || hasBackendEnv {
+					p.HasBackend = true
+					p.BackendPath = subPath
+					p.BackendVer = "Var"
+					p.BackendType = domain.TypeUnknown
+					p.BackendCmd = s.detectStartCommand(subPath, false, true)
+				}
+			}
+		}
+
+		// Eğer klasör adı frontend ipucu veriyorsa, önce frontend'i kontrol et
+		if isFrontendHint && !p.HasFrontend {
+			// Önce frontend imzalarını kontrol et
+			foundFrontend := false
+			for _, sig := range frontendSigs {
+				if found, ver := sig.CheckFunc(subPath); found {
+					p.HasFrontend = true
+					p.FrontendPath = subPath
+					p.FrontendVer = ver
+					p.FrontendType = sig.Type
+					if p.FrontendVer == "" {
+						p.FrontendVer = "Var"
+					}
+					p.FrontendCmd = s.detectStartCommand(subPath, true, false)
+					foundFrontend = true
+					break
+				}
+			}
+
+			// Eğer spesifik teknoloji bulunamadıysa ama klasör adı frontend ipucu veriyorsa
+			// ve içinde package.json varsa VEYA frontend yapısı/dependency'leri varsa, genel frontend olarak işaretle
+			if !foundFrontend {
+				hasPackageJSON := false
+				if _, err := os.Stat(filepath.Join(subPath, "package.json")); err == nil {
+					hasPackageJSON = true
+				}
+
+				// Dosya yapısı analizi
+				hasFrontendStruct := hasFrontendStructure(subPath)
+
+				// Dependency analizi
+				hasFrontendDeps := s.hasFrontendDependencies(subPath)
+
+				// Env config analizi
+				hasFrontendEnv := hasFrontendEnvConfig(subPath)
+
+				if hasPackageJSON || hasFrontendStruct || hasFrontendDeps || hasFrontendEnv {
+					p.HasFrontend = true
+					p.FrontendPath = subPath
+					p.FrontendVer = "Var"
+					p.FrontendType = domain.TypeUnknown
+					p.FrontendCmd = s.detectStartCommand(subPath, true, false)
+				}
+			}
+		}
+
+		// Klasör adı ipucu vermiyorsa, normal tarama yap
+		if !isFrontendHint && !isBackendHint {
+			// Check for ALL Frontend signatures
+			for _, sig := range frontendSigs {
+				if found, ver := sig.CheckFunc(subPath); found {
+					if !p.HasFrontend {
+						p.HasFrontend = true
+						p.FrontendPath = subPath
+						p.FrontendVer = ver
+						p.FrontendType = sig.Type
+						if p.FrontendVer == "" {
+							p.FrontendVer = "Var"
+						}
+						p.FrontendCmd = s.detectStartCommand(subPath, true, false)
+					} else {
+						// Diğerleri ek frontend teknolojileri olarak kaydedilsin
+						verToStore := ver
+						if verToStore == "" {
+							verToStore = "Var"
+						}
+						// Aynı teknoloji zaten eklenmiş mi kontrol et
+						alreadyExists := sig.Type == p.FrontendType
+						for _, ft := range p.DetectedFrontendTechs {
+							if ft.Type == sig.Type {
+								alreadyExists = true
+								break
+							}
+						}
+						if !alreadyExists {
+							p.DetectedFrontendTechs = append(p.DetectedFrontendTechs, domain.DetectedTech{
+								Type:    sig.Type,
+								Version: verToStore,
+							})
+						}
+					}
+				}
+			}
+
+			// Check for ALL Backend signatures
+			for _, sig := range backendSigs {
+				if found, ver := sig.CheckFunc(subPath); found {
+					if !p.HasBackend {
+						p.HasBackend = true
+						p.BackendPath = subPath
+						p.BackendVer = ver
+						p.BackendType = sig.Type
+						if p.BackendVer == "" {
+							p.BackendVer = "Var"
+						}
+						p.BackendCmd = s.detectStartCommand(subPath, false, true)
+					} else {
+						// Diğerleri ek backend teknolojileri olarak kaydedilsin
+						verToStore := ver
+						if verToStore == "" {
+							verToStore = "Var"
+						}
+						// Aynı teknoloji zaten eklenmiş mi kontrol et
+						alreadyExists := sig.Type == p.BackendType
+						for _, bt := range p.DetectedBackendTechs {
+							if bt.Type == sig.Type {
+								alreadyExists = true
+								break
+							}
+						}
+						if !alreadyExists {
+							p.DetectedBackendTechs = append(p.DetectedBackendTechs, domain.DetectedTech{
+								Type:    sig.Type,
+								Version: verToStore,
+							})
+						}
+					}
 				}
 			}
 		}
@@ -384,37 +1539,61 @@ func (s *Scanner) scanRootDirectory(projectPath string, p *domain.Project) {
 	frontendSigs := s.getFrontendSignatures()
 	backendSigs := s.getBackendSignatures()
 
-	// Check Frontend first
+	// Check ALL Frontend signatures
 	for _, sig := range frontendSigs {
 		if found, ver := sig.CheckFunc(projectPath); found {
-			p.HasFrontend = true
-			p.FrontendPath = projectPath
-			p.FrontendVer = ver
-			p.FrontendType = sig.Type
-			if p.FrontendVer == "" {
-				p.FrontendVer = "Var"
+			if !p.HasFrontend {
+				// İlk bulunan ana frontend olsun
+				p.HasFrontend = true
+				p.FrontendPath = projectPath
+				p.FrontendVer = ver
+				p.FrontendType = sig.Type
+				if p.FrontendVer == "" {
+					p.FrontendVer = "Var"
+				}
+				p.FrontendCmd = s.detectStartCommand(projectPath, true, false)
+				p.Type = sig.Type
+			} else {
+				// Diğerleri ek frontend teknolojileri olarak kaydedilsin
+				verToStore := ver
+				if verToStore == "" {
+					verToStore = "Var"
+				}
+				p.DetectedFrontendTechs = append(p.DetectedFrontendTechs, domain.DetectedTech{
+					Type:    sig.Type,
+					Version: verToStore,
+				})
 			}
-			p.FrontendCmd = s.detectStartCommand(projectPath)
-			p.Type = sig.Type
-			break
 		}
 	}
 
-	// Check Backend
+	// Check ALL Backend signatures
 	for _, sig := range backendSigs {
 		if found, ver := sig.CheckFunc(projectPath); found {
-			p.HasBackend = true
-			p.BackendPath = projectPath
-			p.BackendVer = ver
-			p.BackendType = sig.Type
-			if p.BackendVer == "" {
-				p.BackendVer = "Var"
+			if !p.HasBackend {
+				// İlk bulunan ana backend olsun
+				p.HasBackend = true
+				p.BackendPath = projectPath
+				p.BackendVer = ver
+				p.BackendType = sig.Type
+				if p.BackendVer == "" {
+					p.BackendVer = "Var"
+				}
+				p.BackendCmd = s.detectStartCommand(projectPath, false, true)
+				if p.Type == domain.TypeUnknown {
+					p.Type = sig.Type
+				}
+			} else {
+				// Diğerleri ek backend teknolojileri olarak kaydedilsin
+				verToStore := ver
+				if verToStore == "" {
+					verToStore = "Var"
+				}
+				p.DetectedBackendTechs = append(p.DetectedBackendTechs, domain.DetectedTech{
+					Type:    sig.Type,
+					Version: verToStore,
+				})
 			}
-			p.BackendCmd = s.detectStartCommand(projectPath)
-			if p.Type == domain.TypeUnknown {
-				p.Type = sig.Type
-			}
-			break
 		}
 	}
 
@@ -468,24 +1647,138 @@ func (s *Scanner) getPackageVersion(path, pkgName string) string {
 	return ""
 }
 
+// detectPackageManager projenin kullandığı paket yöneticisini tespit eder
+func (s *Scanner) detectPackageManager(path string) string {
+	if _, err := os.Stat(filepath.Join(path, "bun.lockb")); err == nil {
+		return "bun"
+	}
+	if _, err := os.Stat(filepath.Join(path, "pnpm-lock.yaml")); err == nil {
+		return "pnpm"
+	}
+	if _, err := os.Stat(filepath.Join(path, "yarn.lock")); err == nil {
+		return "yarn"
+	}
+	return "npm"
+}
+
 // detectStartCommand determines the best command to start the project
-func (s *Scanner) detectStartCommand(path string) string {
-	// 1. JS/TS Projects (Next, Nest, React, Vue)
+func (s *Scanner) detectStartCommand(path string, isFrontend, isBackend bool) string {
+	// 1. JS/TS Projects (Next, Nest, React, Vue, etc.)
 	pkgPath := filepath.Join(path, "package.json")
 	if _, err := os.Stat(pkgPath); err == nil {
 		data, err := os.ReadFile(pkgPath)
 		if err == nil {
 			var pkg packageJSON
 			if err := json.Unmarshal(data, &pkg); err == nil {
-				// Priority: dev > start:dev > start
-				if _, ok := pkg.Scripts["dev"]; ok {
-					return "npm run dev"
+				pm := s.detectPackageManager(path)
+				runCmd := pm + " run"
+				if pm == "bun" {
+					runCmd = "bun run"
 				}
-				if _, ok := pkg.Scripts["start:dev"]; ok {
-					return "npm run start:dev"
+
+				// Akıllı Script Analizi (Score-Based)
+				bestScript := ""
+				maxScore := -9999
+				folderName := strings.ToLower(filepath.Base(path))
+
+				for scriptName, scriptContent := range pkg.Scripts {
+					score := 0
+					lowerName := strings.ToLower(scriptName)
+					lowerContent := strings.ToLower(scriptContent)
+
+					// --- Filtreleme (Negatif Puanlar) ---
+					if strings.Contains(lowerName, "test") ||
+						strings.Contains(lowerName, "lint") ||
+						strings.Contains(lowerName, "build") ||
+						strings.Contains(lowerName, "type-check") ||
+						(strings.Contains(lowerName, "analyze") && !strings.Contains(lowerName, "bundle")) ||
+						strings.Contains(lowerName, "e2e") {
+						score -= 500 // Elenmesi garanti olsun
+					}
+
+					// --- İsim Puanları (Temel) ---
+					// Tam eşleşmeler (En yüksek öncelik)
+					if lowerName == "dev" || lowerName == "develop" || lowerName == "start:dev" {
+						score += 100
+					} else if lowerName == "start" || lowerName == "serve" || lowerName == "watch" {
+						score += 50
+					} else if strings.Contains(lowerName, "dev") { // "web:dev", "app:dev"
+						score += 80
+					} else if strings.Contains(lowerName, "start") {
+						score += 40
+					}
+
+					// --- Yeni: Bağlamsal Puanlama (Context-Aware) ---
+					if isFrontend {
+						// Frontend spesifik kelimeler
+						if lowerName == "web" ||
+							lowerName == "client" ||
+							lowerName == "ui" ||
+							lowerName == "frontend" ||
+							lowerName == "app" ||
+							lowerName == "site" {
+							score += 80
+						}
+						// Context Bonus: Eğer frontend arıyorsak ve script adı frontend ile ilgiliyse
+						if strings.Contains(lowerName, "web") || strings.Contains(lowerName, "client") {
+							score += 100
+						}
+					}
+
+					if isBackend {
+						// Backend spesifik kelimeler
+						if lowerName == "api" ||
+							lowerName == "server" ||
+							lowerName == "backend" ||
+							lowerName == "admin" ||
+							lowerName == "service" {
+							score += 80
+						}
+						// Context Bonus: Eğer backend arıyorsak ve script adı backend ile ilgiliyse
+						if strings.Contains(lowerName, "api") || strings.Contains(lowerName, "server") {
+							score += 100
+						}
+					}
+
+					// --- Yeni: Klasör Eşleşmesi (Smart Matching) ---
+					// Eğer script adı klasör adıyla aynıysa (örn: klasör=web, script=web)
+					// Bu genellikle monorepo'larda "npm run web" şeklinde kullanılır.
+					if lowerName == folderName {
+						score += 200
+					}
+
+					// --- İçerik Puanları ---
+					// Framework spesifik komutlar
+					if strings.Contains(lowerContent, "next dev") ||
+						strings.Contains(lowerContent, "vite") ||
+						strings.Contains(lowerContent, "nuxt dev") ||
+						strings.Contains(lowerContent, "ng serve") ||
+						strings.Contains(lowerContent, "react-scripts start") ||
+						strings.Contains(lowerContent, "astro dev") ||
+						strings.Contains(lowerContent, "remix dev") {
+						score += 50
+					}
+					// Generic development tools
+					if strings.Contains(lowerContent, "nodemon") ||
+						strings.Contains(lowerContent, "ts-node-dev") ||
+						strings.Contains(lowerContent, "nest start") || // NestJS specific
+						strings.Contains(lowerContent, "--watch") {
+						score += 20
+					}
+
+					// En yüksek skoru güncelle
+					if score > maxScore {
+						maxScore = score
+						bestScript = scriptName
+					}
 				}
-				if _, ok := pkg.Scripts["start"]; ok {
-					return "npm start"
+
+				if bestScript != "" && maxScore > 0 {
+					// "npm start" özel durumu
+					if bestScript == "start" && pm == "npm" {
+						return "npm start"
+					}
+					return fmt.Sprintf("%s %s", runCmd, bestScript)
 				}
 			}
 		}
@@ -496,34 +1789,162 @@ func (s *Scanner) detectStartCommand(path string) string {
 		if _, err := os.Stat(filepath.Join(path, "main.go")); err == nil {
 			return "go run main.go"
 		}
+		if _, err := os.Stat(filepath.Join(path, "cmd", "server", "main.go")); err == nil {
+			return "go run cmd/server/main.go"
+		}
 		return "go run ."
 	}
 
-	// 3. Python/Django
+	// 3. Python Projects
 	if _, err := os.Stat(filepath.Join(path, "manage.py")); err == nil {
-		return "python manage.py runserver"
+		return "python manage.py runserver" // Django
 	}
-
-	// 4. Python/Flask
+	if _, err := os.Stat(filepath.Join(path, "main.py")); err == nil {
+		return "python main.py"
+	}
 	if _, err := os.Stat(filepath.Join(path, "app.py")); err == nil {
-		return "flask run"
+		return "python app.py" // Flask
 	}
 
-	// 5. PHP/Laravel
+	// 4. PHP/Laravel
 	if _, err := os.Stat(filepath.Join(path, "artisan")); err == nil {
 		return "php artisan serve"
 	}
 
-	// 6. Java/Spring (Maven)
+	// 5. Java/Spring
 	if _, err := os.Stat(filepath.Join(path, "pom.xml")); err == nil {
 		return "mvn spring-boot:run"
 	}
-
-	// 7. Java/Spring (Gradle)
 	if _, err := os.Stat(filepath.Join(path, "build.gradle")); err == nil {
 		return "./gradlew bootRun"
 	}
 
+	// 6. Docker
+	hasCompose := false
+	if _, err := os.Stat(filepath.Join(path, "docker-compose.yml")); err == nil {
+		hasCompose = true
+	} else if _, err := os.Stat(filepath.Join(path, "docker-compose.yaml")); err == nil {
+		hasCompose = true
+	}
+
+	if hasCompose {
+		return "docker-compose up"
+	}
+
 	// Default fallback
 	return "echo [DevTerminal] Başlatma komutu bulunamadı"
+}
+
+// checkTools checks for various tools (Prisma, Drizzle, Hasura, Supabase, Storybook)
+func (s *Scanner) checkTools(path string, p *domain.Project) {
+	// Temizle
+	p.PrismaPath = ""
+	p.DrizzlePath = ""
+	p.HasuraPath = ""
+	p.SupabasePath = ""
+	p.StorybookPath = ""
+
+	_ = filepath.WalkDir(path, func(fPath string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		name := d.Name()
+
+		// Skip heavy directories
+		if d.IsDir() && fPath != path {
+			if name == "node_modules" || name == ".git" || name == "vendor" || name == "dist" || name == "build" || name == ".next" {
+				return filepath.SkipDir
+			}
+			// Skip hidden folders except specific tool folders
+			if strings.HasPrefix(name, ".") {
+				if name != ".config" && name != ".storybook" && name != ".hasura" {
+					return filepath.SkipDir
+				}
+			}
+		}
+
+		// Depth check (max 3 levels)
+		rel, _ := filepath.Rel(path, fPath)
+		depth := strings.Count(rel, string(os.PathSeparator))
+		if depth > 3 {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		dir := filepath.Dir(fPath)
+
+		// --- Check Dirs ---
+		if d.IsDir() {
+			if name == ".storybook" && p.StorybookPath == "" {
+				p.StorybookPath = dir // .storybook folder is inside the project root usually
+				p.HasStorybook = true
+			}
+			if name == "supabase" && p.SupabasePath == "" {
+				p.SupabasePath = dir // run npx from parent of supabase folder
+				p.HasSupabase = true
+			}
+			if name == "hasura" && p.HasuraPath == "" {
+				p.HasuraPath = dir // run hasura console from parent
+				p.HasHasura = true
+			}
+		}
+
+		// --- Check Files ---
+		if !d.IsDir() {
+			// Prisma
+			if name == "schema.prisma" && p.PrismaPath == "" {
+				// If schema is in prisma/schema.prisma, use parent folder
+				if filepath.Base(dir) == "prisma" {
+					p.PrismaPath = filepath.Dir(dir)
+				} else {
+					p.PrismaPath = dir
+				}
+				p.HasPrisma = true
+			}
+			// Drizzle
+			if strings.HasPrefix(name, "drizzle.config") && p.DrizzlePath == "" {
+				p.DrizzlePath = dir
+				p.HasDrizzle = true
+			}
+			// Package.json dependencies
+			if name == "package.json" {
+				data, err := os.ReadFile(fPath)
+				if err == nil {
+					var pkg packageJSON
+					if json.Unmarshal(data, &pkg) == nil {
+						// Check Deps
+						for dep := range pkg.Dependencies {
+							if strings.Contains(dep, "prisma") && p.PrismaPath == "" {
+								p.PrismaPath = dir
+								p.HasPrisma = true
+							}
+							if strings.Contains(dep, "drizzle-orm") && p.DrizzlePath == "" {
+								p.DrizzlePath = dir
+								p.HasDrizzle = true
+							}
+						}
+						// Check DevDeps
+						for dep := range pkg.DevDependencies {
+							if strings.Contains(dep, "prisma") && p.PrismaPath == "" {
+								p.PrismaPath = dir
+								p.HasPrisma = true
+							}
+							if strings.Contains(dep, "drizzle-orm") && p.DrizzlePath == "" {
+								p.DrizzlePath = dir
+								p.HasDrizzle = true
+							}
+							if strings.Contains(dep, "storybook") && p.StorybookPath == "" {
+								p.StorybookPath = dir
+								p.HasStorybook = true
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
 }

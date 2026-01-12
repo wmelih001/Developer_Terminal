@@ -31,6 +31,8 @@ const (
 	StateContextGen
 	StateDependencyDoctor
 	StateNgrok
+	StatePortCheckWarning
+	StateHealthScore
 )
 
 type NgrokStep int
@@ -63,6 +65,7 @@ type MainModel struct {
 
 	// Ngrok
 	NgrokService    *service.NgrokService
+	HealthService   *service.HealthService
 	NgrokStep       NgrokStep
 	NgrokPathInput  textinput.Model
 	NgrokPortInput  textinput.Model
@@ -81,6 +84,13 @@ type MainModel struct {
 	// Feedback Flags
 	CopiedSuccess       bool
 	AllPackagesUpToDate bool
+
+	// Port Check
+	PortWarnings      []service.PortInfo
+	PendingLaunchMode string
+
+	// Health Score
+	HealthReport *service.HealthReport
 }
 
 type copiedResetMsg struct{}
@@ -130,6 +140,7 @@ func NewMainModel() *MainModel {
 		Launcher:        service.NewLauncher(cfg),
 		Doctor:          service.NewDoctor(cfg),
 		NgrokService:    service.NewNgrokService(cfg),
+		HealthService:   service.NewHealthService(),
 		NgrokPathInput:  tiPath,
 		NgrokPortInput:  tiPort,
 		NgrokTokenInput: tiToken,
@@ -237,6 +248,15 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case StateDependencyDoctor:
+			if msg.String() == "esc" {
+				m.State = StateProjectActions
+				return m, nil
+			}
+			if msg.String() == "q" {
+				return m, tea.Quit
+			}
+
+		case StateHealthScore:
 			if msg.String() == "esc" {
 				m.State = StateProjectActions
 				return m, nil
@@ -381,13 +401,55 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 
+		case StatePortCheckWarning:
+			switch msg.String() {
+			case "y", "Y", "enter":
+				// Devam et
+				// Launch
+				mode := m.PendingLaunchMode
+				m.State = StateProjectActions // Reset state visualization implicitly by launching? No, launch returns nil msg usually or error.
+				// LaunchProject returns tea.Cmd
+				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, mode); return nil }
+			case "n", "N", "esc":
+				// İptal
+				m.State = StateProjectActions
+				m.PortWarnings = nil
+				return m, nil
+			case "q":
+				return m, tea.Quit
+			}
+
 		case StateProjectActions:
 			switch msg.String() {
 			case "1", "f":
+				// Port Check: Frontend
+				warnings := service.CheckProjectPorts(true, false)
+				if len(warnings) > 0 {
+					m.PortWarnings = warnings
+					m.PendingLaunchMode = "frontend"
+					m.State = StatePortCheckWarning
+					return m, nil
+				}
 				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, "frontend"); return nil }
 			case "2", "b":
+				// Port Check: Backend
+				warnings := service.CheckProjectPorts(false, true)
+				if len(warnings) > 0 {
+					m.PortWarnings = warnings
+					m.PendingLaunchMode = "backend"
+					m.State = StatePortCheckWarning
+					return m, nil
+				}
 				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, "backend"); return nil }
 			case "3", "l":
+				// Port Check: Full
+				warnings := service.CheckProjectPorts(true, true)
+				if len(warnings) > 0 {
+					m.PortWarnings = warnings
+					m.PendingLaunchMode = "full"
+					m.State = StatePortCheckWarning
+					return m, nil
+				}
 				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, "full"); return nil }
 			case "4":
 				// Ngrok Flow - Smart Skip
@@ -410,6 +472,27 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return contextMsg(tree)
 				}
+			// Shortcuts for Tools
+			case "f1":
+				if m.Selected.HasPrisma {
+					return m, func() tea.Msg { _ = m.Launcher.LaunchPrisma(m.Selected); return nil }
+				}
+			case "f2":
+				if m.Selected.HasDrizzle {
+					return m, func() tea.Msg { _ = m.Launcher.LaunchDrizzle(m.Selected); return nil }
+				}
+			case "f3":
+				if m.Selected.HasHasura {
+					return m, func() tea.Msg { _ = m.Launcher.LaunchHasura(m.Selected); return nil }
+				}
+			case "f4":
+				if m.Selected.HasSupabase {
+					return m, func() tea.Msg { _ = m.Launcher.LaunchSupabase(m.Selected); return nil }
+				}
+			case "f5":
+				if m.Selected.HasStorybook {
+					return m, func() tea.Msg { _ = m.Launcher.LaunchStorybook(m.Selected); return nil }
+				}
 			case "6":
 				// Doctor
 				m.State = StateDependencyDoctor
@@ -417,8 +500,14 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Table.SetRows([]table.Row{}) // Clear old results
 				m.AllPackagesUpToDate = false  // Reset flag
 				return m, tea.Batch(m.Spinner.Tick, m.checkDependenciesCmd())
-			case "\"", "backspace":
+			case "backspace":
 				m.State = StateProjectSelect
+			case "h", "H": // Hidden shortcut for health? No, let's stick to requested "
+				// Health Score Trigger
+				report := m.HealthService.CheckHealth(m.Selected.Path)
+				m.HealthReport = &report
+				m.State = StateHealthScore
+				return m, nil
 			case "q":
 				return m, tea.Quit
 			}
@@ -447,6 +536,12 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					domain.TypeMobile:      "📱",
 					domain.TypeHTML:        "🌐",
 					domain.TypeTypeScript:  "🔷",
+					domain.TypeAngular:     "🅰️",
+					domain.TypeSvelte:      "🔥",
+					domain.TypeSolidJS:     "💎",
+					domain.TypeAstro:       "🚀",
+					domain.TypeRemix:       "💿",
+					domain.TypeNuxt:        "💚",
 					domain.TypeNest:        "🐱",
 					domain.TypeExpress:     "🚂",
 					domain.TypeGo:          "🐹",
@@ -455,6 +550,12 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					domain.TypeLaravel:     "🐘",
 					domain.TypeSpring:      "☕",
 					domain.TypePHP:         "🐘",
+					domain.TypeFastAPI:     "⚡",
+					domain.TypeFiber:       "🔷",
+					domain.TypeHono:        "🔥",
+					domain.TypeKoa:         "🥝",
+					domain.TypeFlutter:     "🦋",
+					domain.TypeExpo:        "📱",
 					domain.TypeDocker:      "🐳",
 				}
 				if icon, ok := icons[techType]; ok {
@@ -521,6 +622,13 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Translate KeyMap (Help)
 		m.List.AdditionalShortHelpKeys = func() []key.Binding {
 			return []key.Binding{
+				key.NewBinding(
+					key.WithKeys("r"),
+					key.WithHelp(
+						lipgloss.NewStyle().Foreground(lipgloss.Color("#bd93f9")).Render("r"),
+						lipgloss.NewStyle().Foreground(lipgloss.Color("#bd93f9")).Render("Yenile"),
+					),
+				),
 				key.NewBinding(
 					key.WithKeys("q"),
 					key.WithHelp(
@@ -592,6 +700,14 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Spinner, cmd = m.Spinner.Update(msg)
 		cmds = append(cmds, cmd)
 	case StateProjectSelect:
+		// "r" ile yenile (Filtreleme modunda değilse)
+		if key, ok := msg.(tea.KeyMsg); ok && key.String() == "r" && m.List.FilterState() != list.Filtering {
+			m.Scanner.ClearCache()
+			m.State = StateScanning
+			cmds = append(cmds, m.scanProjectsCmd())
+			return m, tea.Batch(cmds...)
+		}
+
 		// "Tab" ile filtreleme modu kapatma (Toggle)
 		if key, ok := msg.(tea.KeyMsg); ok && key.String() == "tab" && m.List.FilterState() == list.Filtering {
 			msg = tea.KeyMsg{Type: tea.KeyEsc}
@@ -661,6 +777,35 @@ func (m *MainModel) View() string {
 		return v
 	case StateProjectActions:
 		return m.actionsView()
+	case StatePortCheckWarning:
+		// Format warnings
+		var warnText string
+		for _, w := range m.PortWarnings {
+			procInfo := ""
+			if w.Process != "" {
+				procInfo = fmt.Sprintf(" (%s, PID: %d)", w.Process, w.ProcessID)
+			}
+			warnText += fmt.Sprintf("• Port %d dolu%s\n", w.Port, procInfo)
+		}
+
+		box := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#ff5555")).
+			Padding(1, 2).
+			Align(lipgloss.Center).
+			Render(
+				lipgloss.JoinVertical(lipgloss.Center,
+					lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("⚠️  PORT ÇAKIŞMASI TESPİT EDİLDİ"),
+					"",
+					lipgloss.NewStyle().Foreground(lipgloss.Color("#f8f8f2")).Align(lipgloss.Center).Render(warnText),
+					"",
+					"Bu portlar şu an kullanımda. Yine de devam edilsin mi?",
+					"",
+					lipgloss.NewStyle().Foreground(lipgloss.Color("#6272a4")).Render("[Y] Evet, Zorla Başlat    [N] Hayır, İptal Et"),
+				),
+			)
+		return lipgloss.Place(m.Width, m.Height, lipgloss.Center, lipgloss.Center, box)
+
 	case StateDependencyDoctor:
 		footer := m.renderFooter("Esc", "Geri Dön")
 
@@ -693,6 +838,8 @@ func (m *MainModel) View() string {
 		return fmt.Sprintf("\n  %s İçin Doktor Raporu%s\n\n  %s", m.Selected.Name, tableView, footer)
 	case StateNgrok:
 		return m.ngrokView()
+	case StateHealthScore:
+		return m.healthScoreView()
 	}
 
 	return "Bilinmeyen Durum"
@@ -823,8 +970,56 @@ func (i item) Title() string       { return i.title }
 func (i item) Description() string { return i.desc }
 func (i item) FilterValue() string { return i.project.Name }
 
-// ... (List initialization loop in Update) ...
-// Instead of editing the loop here (which is in Update), I will edit the FilterValue method first.
-// Wait, I can do both in one REPLACE if they are close, or separate tools.
-// They are far apart (Update around 200, Item at bottom).
-// I will do FilterValue first.
+func (m *MainModel) healthScoreView() string {
+	if m.HealthReport == nil {
+		return "Sağlık raporu oluşturulamadı."
+	}
+
+	scoreColor := "#ff5555" // Red
+	if m.HealthReport.Score >= 80 {
+		scoreColor = "#50fa7b" // Green
+	} else if m.HealthReport.Score >= 50 {
+		scoreColor = "#f1fa8c" // Yellow
+	}
+
+	scoreTitle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(scoreColor)).
+		Bold(true).
+		Render(fmt.Sprintf("%d/100", m.HealthReport.Score))
+
+	header := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(1, 2).
+		MarginBottom(1).
+		Render(fmt.Sprintf("Proje Sağlık Skoru: %s", scoreTitle))
+
+	var rows []string
+
+	// Missing Items
+	if len(m.HealthReport.Issues) > 0 {
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("❌ Eksik Öğeler:"))
+		for _, issue := range m.HealthReport.Issues {
+			rows = append(rows, fmt.Sprintf(" • %s (-%d puan)", issue.Description, issue.Points))
+		}
+		rows = append(rows, "")
+	}
+
+	// Passed Items
+	if len(m.HealthReport.PassedItems) > 0 {
+		rows = append(rows, lipgloss.NewStyle().Foreground(lipgloss.Color("#50fa7b")).Bold(true).Render("✅ Tamamlananlar:"))
+		for _, item := range m.HealthReport.PassedItems {
+			rows = append(rows, fmt.Sprintf(" • %s", item))
+		}
+	}
+
+	footer := m.renderFooter("Esc", "Geri Dön")
+
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		strings.Join(rows, "\n"),
+		"\n",
+		footer,
+	)
+
+	return lipgloss.Place(m.Width, m.Height, lipgloss.Center, lipgloss.Center, content)
+}
