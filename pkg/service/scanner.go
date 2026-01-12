@@ -933,6 +933,8 @@ func (s *Scanner) ScanProjects() []domain.Project {
 		for i := range projects {
 			s.calculateHealthScore(projects[i].Path, &projects[i])
 			s.checkTools(projects[i].Path, &projects[i])
+			// Scriptleri her zaman taze tut
+			projects[i].Scripts = s.scanPackageScripts(&projects[i])
 		}
 
 		// Cache'den gelen projeler için de config senkronizasyonu yap
@@ -1350,6 +1352,9 @@ func (s *Scanner) scanDirectory(root string) []domain.Project {
 			for _, info := range portInfos {
 				p.PortWarnings = append(p.PortWarnings, FormatPortWarning(info))
 			}
+
+			// Package Scripts taraması
+			p.Scripts = s.scanPackageScripts(&p)
 
 			results = append(results, p)
 		}
@@ -1974,4 +1979,57 @@ func (s *Scanner) checkTools(path string, p *domain.Project) {
 		}
 		return nil
 	})
+}
+
+// scanPackageScripts reads scripts from package.json
+// scanPackageScripts reads scripts from package.json in root, frontend, and backend paths
+func (s *Scanner) scanPackageScripts(p *domain.Project) map[string]string {
+	scripts := make(map[string]string)
+
+	// Helper to scan a specific path
+	scan := func(path string, prefix string) {
+		if path == "" {
+			return
+		}
+		pkgPath := filepath.Join(path, "package.json")
+		data, err := os.ReadFile(pkgPath)
+		if err != nil {
+			return
+		}
+
+		var pkg packageJSON
+		if err := json.Unmarshal(data, &pkg); err != nil {
+			return
+		}
+
+		for k, v := range pkg.Scripts {
+			key := k
+			if prefix != "" {
+				key = fmt.Sprintf("%s:%s", prefix, k)
+			}
+			scripts[key] = v
+		}
+	}
+
+	// 1. Root
+	scan(p.Path, "")
+
+	// 2. Frontend (only if different from root)
+	if p.FrontendPath != "" && p.FrontendPath != p.Path {
+		scan(p.FrontendPath, "client")
+	}
+
+	// 3. Backend (only if different from root)
+	if p.BackendPath != "" && p.BackendPath != p.Path {
+		scan(p.BackendPath, "server")
+	}
+
+	return scripts
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

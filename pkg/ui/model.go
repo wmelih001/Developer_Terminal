@@ -34,6 +34,8 @@ const (
 	StateNgrok
 	StatePortCheckWarning
 	StateHealthScore
+	StateTaskRunner
+	StateSplash
 )
 
 type NgrokStep int
@@ -59,10 +61,11 @@ type MainModel struct {
 	State    SessionState
 
 	// Components
-	List          list.Model
-	Table         table.Model
-	Spinner       spinner.Model
-	FirstRunInput textinput.Model
+	List           list.Model
+	TaskRunnerList list.Model
+	Table          table.Model
+	Spinner        spinner.Model
+	FirstRunInput  textinput.Model
 
 	// Ngrok
 	NgrokService    *service.NgrokService
@@ -92,7 +95,12 @@ type MainModel struct {
 
 	// Health Score
 	HealthReport *service.HealthReport
+
+	// Splash
+	SplashProgress float64
 }
+
+type splashTickMsg time.Time
 
 type copiedResetMsg struct{}
 
@@ -129,7 +137,10 @@ func NewMainModel() *MainModel {
 	tiFirstRun.Width = 60
 	tiFirstRun.Focus()
 
-	initialState := StateScanning
+	// Initial State: Splash Screen (if configured) or Scanning
+	initialState := StateSplash
+
+	// Ancak Config yüklü değilse/ilk çalışmaysa FirstRun
 	if len(cfg.ProjectsPaths) == 0 {
 		initialState = StateFirstRun
 	}
@@ -149,6 +160,7 @@ func NewMainModel() *MainModel {
 		State:           initialState,
 		Spinner:         s,
 		List:            list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		TaskRunnerList:  list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		Table:           newTable(),
 	}
 }
@@ -186,6 +198,11 @@ func (m *MainModel) Init() tea.Cmd {
 	if m.State == StateScanning {
 		cmds = append(cmds, m.scanProjectsCmd())
 	}
+	if m.State == StateSplash {
+		cmds = append(cmds, tea.Tick(time.Millisecond*50, func(t time.Time) tea.Msg {
+			return splashTickMsg(t)
+		}))
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -210,6 +227,13 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// State Specific Handling
 		switch m.State {
+		case StateSplash:
+			// Allow skipping splash
+			if msg.String() == "enter" || msg.String() == "esc" || msg.String() == " " {
+				m.State = StateScanning
+				return m, m.scanProjectsCmd()
+			}
+
 		case StateFirstRun:
 			var cmd tea.Cmd
 			m.FirstRunInput, cmd = m.FirstRunInput.Update(msg)
@@ -265,6 +289,30 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "q" {
 				return m, tea.Quit
 			}
+
+		case StateTaskRunner:
+			if msg.String() == "esc" {
+				m.State = StateProjectActions
+				return m, nil
+			}
+			if msg.String() == "q" {
+				return m, tea.Quit
+			}
+
+			if msg.String() == "enter" {
+				// Run selected script
+				i, ok := m.TaskRunnerList.SelectedItem().(scriptItem)
+				if ok {
+					return m, func() tea.Msg {
+						_ = m.Launcher.LaunchScript(*m.Selected, i.name, i.cmd)
+						return nil
+					}
+				}
+			}
+
+			var cmd tea.Cmd
+			m.TaskRunnerList, cmd = m.TaskRunnerList.Update(msg)
+			return m, cmd
 
 		case StateNgrok:
 			switch m.NgrokStep {
@@ -537,6 +585,66 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.HealthReport = &report
 				m.State = StateHealthScore
 				return m, nil
+			case "7", "t":
+				// Task Runner
+				if len(m.Selected.Scripts) == 0 {
+					return m, nil // Script yoksa işlem yapma
+				}
+
+				var items []list.Item
+				// Scriptleri listeye ekle
+				for name, cmd := range m.Selected.Scripts {
+					items = append(items, scriptItem{name: name, cmd: cmd})
+				}
+				// Sort by name
+				sort.Slice(items, func(i, j int) bool {
+					return items[i].(scriptItem).name < items[j].(scriptItem).name
+				})
+
+				m.TaskRunnerList.SetItems(items)
+				m.TaskRunnerList.Title = "📜 " + m.Selected.Name + " Scriptleri"
+				m.TaskRunnerList.SetStatusBarItemName("Script", "Script")
+				m.TaskRunnerList.FilterInput.Prompt = "🔍 Ara: "
+				m.TaskRunnerList.DisableQuitKeybindings()
+
+				// Customize Keybindings and Help for Task Runner
+				m.TaskRunnerList.KeyMap.CursorUp.SetHelp("↑", "Yukarı")
+				m.TaskRunnerList.KeyMap.CursorDown.SetHelp("↓", "Aşağı")
+				m.TaskRunnerList.KeyMap.Filter.SetHelp("tab", "Ara")
+				m.TaskRunnerList.KeyMap.ClearFilter.SetHelp("tab/esc", "Vazgeç")
+				m.TaskRunnerList.KeyMap.CancelWhileFiltering.SetHelp("esc", "İptal")
+				m.TaskRunnerList.KeyMap.AcceptWhileFiltering.SetHelp("enter", "Seç")
+				m.TaskRunnerList.KeyMap.ShowFullHelp.SetHelp(",", "Daha Fazla")
+				m.TaskRunnerList.KeyMap.CloseFullHelp.SetHelp(",", "Kapat")
+				m.TaskRunnerList.KeyMap.Quit.SetHelp("q", "Çıkış")
+
+				// Apply same custom keys as main list
+				m.TaskRunnerList.KeyMap.CursorUp.SetKeys("up")
+				m.TaskRunnerList.KeyMap.CursorDown.SetKeys("down")
+				m.TaskRunnerList.KeyMap.Filter.SetKeys("tab")
+				m.TaskRunnerList.KeyMap.ClearFilter.SetKeys("tab", "esc")
+				m.TaskRunnerList.KeyMap.CancelWhileFiltering.SetKeys("esc", "tab")
+				m.TaskRunnerList.KeyMap.ShowFullHelp.SetKeys(",")
+				m.TaskRunnerList.KeyMap.CloseFullHelp.SetKeys(",")
+
+				m.TaskRunnerList.AdditionalShortHelpKeys = func() []key.Binding {
+					return []key.Binding{
+						key.NewBinding(
+							key.WithKeys("q"),
+							key.WithHelp(
+								lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render("q"),
+								lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render("Çıkış"),
+							),
+						),
+					}
+				}
+
+				// Reset List State (Always start clean)
+				m.TaskRunnerList.ResetFilter()
+				m.TaskRunnerList.Select(0)
+
+				m.State = StateTaskRunner
+				return m, nil
 			case "e", "E":
 				// Quick Open: Explorer - tam yol ile
 				path := m.Selected.Path
@@ -555,6 +663,8 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Height = msg.Height
 		m.List.SetWidth(msg.Width)
 		m.List.SetHeight(msg.Height - 10)
+		m.TaskRunnerList.SetWidth(msg.Width)
+		m.TaskRunnerList.SetHeight(msg.Height - 5) // Use more space for task runner
 
 	case projectMsg:
 		m.Projects = msg
@@ -753,12 +863,34 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.Err = nil // Clear any previous errors
 		// Tablo güncellendi
+
+	case splashTickMsg:
+		if m.State == StateSplash {
+			m.SplashProgress += 0.00333 // %0.33 arttır (300 frame x 15ms = 4.5 saniye)
+			if m.SplashProgress >= 1.0 {
+				m.SplashProgress = 1.0
+				m.State = StateScanning // Animasyon bitti, taramaya başla
+				cmds = append(cmds, m.scanProjectsCmd())
+			} else {
+				cmds = append(cmds, tea.Tick(time.Millisecond*15, func(t time.Time) tea.Msg {
+					return splashTickMsg(t)
+				}))
+			}
+		}
 	}
 
 	// Alt bileşenleri güncelle
 	switch m.State {
 	case StateScanning, StateNgrok, StateDependencyDoctor:
 		m.Spinner, cmd = m.Spinner.Update(msg)
+		cmds = append(cmds, cmd)
+	case StateSplash:
+		// No component update needed
+	case StateTaskRunner:
+		// "Tab" manuel kontrolüne gerek yok artık, KeyMap ile çözüldü.
+
+		var cmd tea.Cmd
+		m.TaskRunnerList, cmd = m.TaskRunnerList.Update(msg)
 		cmds = append(cmds, cmd)
 	case StateProjectSelect:
 		// "r" ile yenile (Filtreleme modunda değilse)
@@ -916,6 +1048,10 @@ func (m *MainModel) View() string {
 		return m.ngrokView()
 	case StateHealthScore:
 		return m.healthScoreView()
+	case StateTaskRunner:
+		return m.taskRunnerView()
+	case StateSplash:
+		return m.splashView()
 	}
 
 	return "Bilinmeyen Durum"
@@ -1045,6 +1181,15 @@ type item struct {
 func (i item) Title() string       { return i.title }
 func (i item) Description() string { return i.desc }
 func (i item) FilterValue() string { return i.project.Name }
+
+// Script Item Adapter
+type scriptItem struct {
+	name, cmd string
+}
+
+func (i scriptItem) Title() string       { return i.name }
+func (i scriptItem) Description() string { return i.cmd }
+func (i scriptItem) FilterValue() string { return i.name }
 
 func (m *MainModel) healthScoreView() string {
 	if m.HealthReport == nil {

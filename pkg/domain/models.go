@@ -94,6 +94,9 @@ type Project struct {
 	HealthDetails []string // Sağlık skoru detayları (hangi kriterler var/yok)
 	// Port uyarıları
 	PortWarnings []string // Kullanımda olan portlar
+
+	// Package Scripts
+	Scripts map[string]string // package.json scripts (key: script name, value: command)
 }
 
 // ProjectType teknoloji yığınını tanımlar
