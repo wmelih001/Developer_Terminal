@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"strings"
 	"text/template"
+	"time"
 
+	"devterminal/pkg/config"
 	"devterminal/pkg/domain"
 )
 
@@ -19,6 +22,14 @@ func NewLauncher(cfg *domain.Config) *Launcher {
 
 // LaunchProject opens the project in Windows Terminal using the configured template
 func (l *Launcher) LaunchProject(p *domain.Project, mode string) error {
+	// Update LastOpened time
+	if l.Config.LastOpened == nil {
+		l.Config.LastOpened = make(map[string]time.Time)
+	}
+	l.Config.LastOpened[strings.ToLower(p.Path)] = time.Now()
+	// Save config silently
+	_ = config.SaveConfig(l.Config)
+
 	var cmdTmpl string
 	switch mode {
 	case "frontend":

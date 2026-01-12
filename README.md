@@ -78,21 +78,40 @@ Uygulamayı ilk kez çalıştırdığınızda, yapılandırma dosyası **otomati
 Örnek yapılandırma:
 
 ```yaml
+# Proje klasörlerinin yolu
 projects_paths:
-  - "C:\\Work\\Github"
-  - "Z:\\Projects"
+  - M:\Projeler
 
+# Tarama sırasında yok sayılacak klasörler
 ignored_files:
-  - "node_modules"
-  - ".git"
-  - "dist"
+  - .git
+  - node_modules
+  - dist
+  - .next
+  - .idea
+  - .vscode
 
-ngrok_path: "C:\\Users\\User\\AppData\\Local\\Microsoft\\WinGet\\Links\\ngrok.exe"
+# Ngrok yolu (opsiyonel)
+ngrok_path: C:\Users\KullaniciAdi\AppData\Local\Microsoft\WinGet\Links\ngrok.exe
 
+# Başlatma komutları (Windows Terminal)
 commands:
-  launch_frontend: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Frontend" cmd /k "npm run dev"'
-  launch_backend: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Backend" cmd /k "go run ."'
-  launch_full: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Full" cmd /k "npm run dev" ; split-pane -d "{{.Path}}" cmd /k "go run ."'
+  launch_frontend: wt.exe -w 0 new-tab -d "{{.FrontendPath}}" cmd /k "{{.FrontendCmd}}"
+  launch_backend: wt.exe -w 0 new-tab -d "{{.BackendPath}}" cmd /k "{{.BackendCmd}}"
+  launch_full: wt.exe -w 0 new-tab -d "{{.FrontendPath}}" cmd /k "{{.FrontendCmd}}" ; split-pane -d "{{.BackendPath}}" cmd /k "{{.BackendCmd}}"
+
+# Proje bazlı komut özelleştirmeleri (otomatik oluşturulur)
+project_overrides:
+  m:\projeler\my-nextjs-app:
+    frontend: npm run dev
+    backend: npm run start:dev
+  m:\projeler\go-api:
+    frontend: ""
+    backend: go run .
+
+# Son açılan projeler (otomatik oluşturulur)
+last_opened:
+  m:\projeler\my-project: 2026-01-12T19:00:00+03:00
 ```
 
 ## Lisans

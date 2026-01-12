@@ -31,7 +31,7 @@ func LoadConfig() (*domain.Config, error) {
 	viper.SetDefault("ignored_files", []string{
 		".git", "node_modules", "dist", ".next", ".idea", ".vscode",
 	})
-	// Default launch commands (optimistic defaults for Windows Terminal)
+	// Default launch commands (optimistic defaults for Windows Terminal with PowerShell)
 	viper.SetDefault("commands.launch_frontend", "wt.exe -w 0 new-tab -d \"{{.FrontendPath}}\" cmd /k \"{{.FrontendCmd}}\"")
 	viper.SetDefault("commands.launch_backend", "wt.exe -w 0 new-tab -d \"{{.BackendPath}}\" cmd /k \"{{.BackendCmd}}\"")
 	viper.SetDefault("commands.launch_full", "wt.exe -w 0 new-tab -d \"{{.FrontendPath}}\" cmd /k \"{{.FrontendCmd}}\" ; split-pane -d \"{{.BackendPath}}\" cmd /k \"{{.BackendCmd}}\"")
@@ -60,16 +60,12 @@ func LoadConfig() (*domain.Config, error) {
 	}
 	if strings.Contains(cfg.Commands.LaunchFull, "%s") {
 		// LaunchFull genellikle iki tane %s içerir (FrontendPath ve BackendPath)
-		// Basit ReplaceAll ikisine de FrontendPath'i basar, bu HATALI olur.
-		// Doğru strateji:
-		// 1. Eğer içinde %s varsa ve sayıca 2 ise:
 		if strings.Count(cfg.Commands.LaunchFull, "%s") == 2 {
 			cfg.Commands.LaunchFull = strings.Replace(cfg.Commands.LaunchFull, "%s", "{{.FrontendPath}}", 1)
 			cfg.Commands.LaunchFull = strings.Replace(cfg.Commands.LaunchFull, "%s", "{{.BackendPath}}", 1)
 		} else {
 			// Bilinmeyen format, güvenli moda geç ve varsayılanı kullan
-			// Kullanıcı manuel olarak saçma bir şey yazmış olabilir, sıfırlamak en iyisi.
-			cfg.Commands.LaunchFull = "wt.exe -w 0 new-tab -d \"{{.FrontendPath}}\" cmd /k \"{{.FrontendCmd}}\" ; split-pane -d \"{{.BackendPath}}\" cmd /k \"{{.BackendCmd}}\""
+			cfg.Commands.LaunchFull = "wt.exe -w 0 new-tab -d \"{{.FrontendPath}}\" pwsh -NoExit -Command \"{{.FrontendCmd}}\" ; split-pane -d \"{{.BackendPath}}\" pwsh -NoExit -Command \"{{.BackendCmd}}\""
 		}
 	}
 
@@ -110,6 +106,7 @@ func LoadConfig() (*domain.Config, error) {
 func SaveConfig(cfg *domain.Config) error {
 	viper.Set("projects_paths", cfg.ProjectsPaths)
 	viper.Set("project_overrides", cfg.ProjectOverrides)
+	viper.Set("last_opened", cfg.LastOpened)
 	// Add other fields if necessary to sync back to viper before saving
 	// For now, we mainly accept project paths updates
 

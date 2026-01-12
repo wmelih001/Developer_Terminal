@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // Config uygulama konfigürasyonunu tutar
 type Config struct {
 	ProjectsPaths    []string                   `mapstructure:"projects_paths"`
@@ -8,6 +10,7 @@ type Config struct {
 	NgrokPath        string                     `mapstructure:"ngrok_path"`
 	CustomRules      []CustomRule               `mapstructure:"custom_rules"`
 	ProjectOverrides map[string]ProjectOverride `mapstructure:"project_overrides"`
+	LastOpened       map[string]time.Time       `mapstructure:"last_opened"`
 }
 
 // ProjectOverride proje bazlı komut özelleştirmelerini tutar

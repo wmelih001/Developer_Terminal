@@ -6,6 +6,7 @@ import (
 	"devterminal/pkg/service"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -198,13 +199,13 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// Context Global Back
+		// Context Global Back (Esc)
 		if msg.String() == "esc" {
 			if m.State == StateProjectActions {
-				m.State = StateProjectSelect // Back to list
-				return m, nil
+				m.State = StateProjectSelect
+				// Listeyi son açılanlara göre yeniden sırala
+				return m, func() tea.Msg { return projectMsg(m.Projects) }
 			}
-
 		}
 
 		// State Specific Handling
@@ -407,8 +408,9 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Devam et
 				// Launch
 				mode := m.PendingLaunchMode
-				m.State = StateProjectActions // Reset state visualization implicitly by launching? No, launch returns nil msg usually or error.
-				// LaunchProject returns tea.Cmd
+				m.State = StateProjectActions
+				// Son açılanları HEMEN güncelle (sync)
+				m.updateLastOpened(m.Selected.Path)
 				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, mode); return nil }
 			case "n", "N", "esc":
 				// [Esc] Geri Dön
@@ -426,6 +428,8 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Sonra başlat
 				mode := m.PendingLaunchMode
 				m.State = StateProjectActions
+				// Son açılanları HEMEN güncelle (sync)
+				m.updateLastOpened(m.Selected.Path)
 				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, mode); return nil }
 			case "2":
 				// [2] Açık olan portu kapat (Sadece öldür, başlatma)
@@ -450,6 +454,8 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.State = StatePortCheckWarning
 					return m, nil
 				}
+				// Son açılanları HEMEN güncelle (sync)
+				m.updateLastOpened(m.Selected.Path)
 				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, "frontend"); return nil }
 			case "2", "b":
 				// Port Check: Backend
@@ -460,6 +466,8 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.State = StatePortCheckWarning
 					return m, nil
 				}
+				// Son açılanları HEMEN güncelle (sync)
+				m.updateLastOpened(m.Selected.Path)
 				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, "backend"); return nil }
 			case "3", "l":
 				// Port Check: Full
@@ -470,6 +478,8 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.State = StatePortCheckWarning
 					return m, nil
 				}
+				// Son açılanları HEMEN güncelle (sync)
+				m.updateLastOpened(m.Selected.Path)
 				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, "full"); return nil }
 			case "4":
 				// Ngrok Flow - Smart Skip
@@ -520,13 +530,20 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Table.SetRows([]table.Row{}) // Clear old results
 				m.AllPackagesUpToDate = false  // Reset flag
 				return m, tea.Batch(m.Spinner.Tick, m.checkDependenciesCmd())
-			case "backspace":
-				m.State = StateProjectSelect
+
 			case "h", "H": // Hidden shortcut for health? No, let's stick to requested "
 				// Health Score Trigger
 				report := m.HealthService.CheckHealth(m.Selected.Path)
 				m.HealthReport = &report
 				m.State = StateHealthScore
+				return m, nil
+			case "e", "E":
+				// Quick Open: Explorer - tam yol ile
+				path := m.Selected.Path
+				go func() {
+					// Windows system32'den explorer.exe çağır
+					exec.Command("C:\\Windows\\explorer.exe", path).Run()
+				}()
 				return m, nil
 			case "q":
 				return m, tea.Quit
@@ -542,6 +559,30 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case projectMsg:
 		m.Projects = msg
 		m.State = StateProjectSelect // Direkt listeye git
+
+		// ========================================================
+		// SIRALAMA: Son Açılanlar Üstte, Geri Kalanlar Alfabetik
+		// ========================================================
+		sort.SliceStable(m.Projects, func(i, j int) bool {
+			timeI, hasI := m.Config.LastOpened[strings.ToLower(m.Projects[i].Path)]
+			timeJ, hasJ := m.Config.LastOpened[strings.ToLower(m.Projects[j].Path)]
+
+			// Her ikisi de son açılanlar listesinde -> En son açılan üste
+			if hasI && hasJ {
+				return timeI.After(timeJ)
+			}
+			// Sadece i son açılanlar listesinde -> i üste
+			if hasI && !hasJ {
+				return true
+			}
+			// Sadece j son açılanlar listesinde -> j üste
+			if !hasI && hasJ {
+				return false
+			}
+			// Hiçbiri son açılanlar listesinde değil -> Alfabetik
+			return strings.ToLower(m.Projects[i].Name) < strings.ToLower(m.Projects[j].Name)
+		})
+
 		// Listeyi burada başlat
 		items := make([]list.Item, len(m.Projects))
 		for i, p := range m.Projects {
@@ -740,8 +781,11 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		m.List, cmd = m.List.Update(msg)
-		cmds = append(cmds, cmd)
+		// List'i sadece proje seçim ekranında güncelle
+		if m.State == StateProjectSelect {
+			m.List, cmd = m.List.Update(msg)
+			cmds = append(cmds, cmd)
+		}
 
 		// Liste seçimini yönet
 		if m.State == StateProjectSelect {
@@ -776,6 +820,15 @@ func (m *MainModel) checkDependenciesCmd() tea.Cmd {
 		}
 		return doctorMsg(res)
 	}
+}
+
+// updateLastOpened proje açılma zamanını kaydeder (sync)
+func (m *MainModel) updateLastOpened(path string) {
+	if m.Config.LastOpened == nil {
+		m.Config.LastOpened = make(map[string]time.Time)
+	}
+	m.Config.LastOpened[strings.ToLower(path)] = time.Now()
+	_ = config.SaveConfig(m.Config)
 }
 
 func (m *MainModel) View() string {

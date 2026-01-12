@@ -340,8 +340,8 @@ func (m *MainModel) actionsView() string {
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorGrey).Render("───────────────────────") + "\n")
 	b.WriteString("[4] 📡  Canlı Bağlantı (Ngrok Public)\n\n")
 
-	// 3. Yapay Zeka
-	b.WriteString(HeaderStyle.Render("🧠 ARAÇLAR") + "\n")
+	// 3. Genel Araçlar
+	b.WriteString(HeaderStyle.Render("🛠️ GENEL") + "\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorGrey).Render("───────────────────────") + "\n")
 
 	if m.CopiedSuccess {
@@ -352,23 +352,30 @@ func (m *MainModel) actionsView() string {
 
 	b.WriteString("[6] 🩺  Dependency Doctor (Paket Güncelle)\n")
 	b.WriteString("[H] 🏥  Sağlık Skoru Hesapla\n")
+	b.WriteString("[E] 📂  Explorer'da Aç\n\n")
 
-	if m.Selected.HasPrisma {
-		b.WriteString("[F1] ◮  Prisma Studio\n")
+	// 4. Veritabanı Araçları (sadece varsa göster)
+	hasDbTools := m.Selected.HasPrisma || m.Selected.HasDrizzle || m.Selected.HasHasura || m.Selected.HasSupabase || m.Selected.HasStorybook
+	if hasDbTools {
+		b.WriteString(HeaderStyle.Render("🧠 VERİTABANI & UI ARAÇLARI") + "\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorGrey).Render("───────────────────────") + "\n")
+		if m.Selected.HasPrisma {
+			b.WriteString("[F1] ◮  Prisma Studio\n")
+		}
+		if m.Selected.HasDrizzle {
+			b.WriteString("[F2] 🌧️  Drizzle Studio\n")
+		}
+		if m.Selected.HasHasura {
+			b.WriteString("[F3] 🦅  Hasura Console\n")
+		}
+		if m.Selected.HasSupabase {
+			b.WriteString("[F4] ⚡  Supabase Status\n")
+		}
+		if m.Selected.HasStorybook {
+			b.WriteString("[F5] 📕  Storybook (UI Dev)\n")
+		}
+		b.WriteString("\n")
 	}
-	if m.Selected.HasDrizzle {
-		b.WriteString("[F2] 🌧️  Drizzle Studio\n")
-	}
-	if m.Selected.HasHasura {
-		b.WriteString("[F3] 🦅  Hasura Console\n")
-	}
-	if m.Selected.HasSupabase {
-		b.WriteString("[F4] ⚡  Supabase Status\n")
-	}
-	if m.Selected.HasStorybook {
-		b.WriteString("[F5] 📕  Storybook (UI Dev)\n")
-	}
-	b.WriteString("\n")
 
 	// Seçenekleri bitir ve input satırını ekle
 
