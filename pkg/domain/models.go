@@ -2,11 +2,18 @@ package domain
 
 // Config uygulama konfigürasyonunu tutar
 type Config struct {
-	ProjectsPaths []string     `mapstructure:"projects_paths"`
-	Commands      Commands     `mapstructure:"commands"`
-	IgnoredFiles  []string     `mapstructure:"ignored_files"`
-	NgrokPath     string       `mapstructure:"ngrok_path"`
-	CustomRules   []CustomRule `mapstructure:"custom_rules"`
+	ProjectsPaths    []string                   `mapstructure:"projects_paths"`
+	Commands         Commands                   `mapstructure:"commands"`
+	IgnoredFiles     []string                   `mapstructure:"ignored_files"`
+	NgrokPath        string                     `mapstructure:"ngrok_path"`
+	CustomRules      []CustomRule               `mapstructure:"custom_rules"`
+	ProjectOverrides map[string]ProjectOverride `mapstructure:"project_overrides"`
+}
+
+// ProjectOverride proje bazlı komut özelleştirmelerini tutar
+type ProjectOverride struct {
+	Frontend string `mapstructure:"frontend"`
+	Backend  string `mapstructure:"backend"`
 }
 
 // CustomRule kullanıcı tanımlı tespit kuralını temsil eder

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"devterminal/pkg/config"
 	"devterminal/pkg/domain"
 )
 
@@ -88,6 +89,14 @@ func (s *Scanner) loadCache(rootPath string) ([]domain.Project, bool) {
 			if cachedTime, ok := cache.RootModTimes[path]; !ok || cachedTime != currentModTime {
 				return nil, false // Değişiklik var, yeniden tara
 			}
+		}
+	}
+
+	// 3. Proje bazlı detaylı validasyon
+	// Cache'deki her projenin klasör modification time'ını kontrol et
+	for _, p := range cache.Projects {
+		if info, err := os.Stat(p.Path); err != nil || info.ModTime().Unix() > cache.Timestamp {
+			return nil, false // Bir proje değişmiş, yeniden tara
 		}
 	}
 
@@ -530,10 +539,19 @@ func hasBackendEnvConfig(path string) bool {
 
 		content := string(data)
 		signalCount := 0
+		lines := strings.Split(content, "\n")
 
-		for _, signal := range backendEnvSignals {
-			if strings.Contains(content, signal) {
-				signalCount++
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			// Yorum satırlarını atla
+			if strings.HasPrefix(line, "#") {
+				continue
+			}
+
+			for _, signal := range backendEnvSignals {
+				if strings.Contains(line, signal) {
+					signalCount++
+				}
 			}
 		}
 
@@ -558,11 +576,20 @@ func hasFrontendEnvConfig(path string) bool {
 		}
 
 		content := string(data)
+		lines := strings.Split(content, "\n")
 
-		// Frontend prefix'lerini kontrol et (NEXT_PUBLIC_, VITE_, REACT_APP_)
-		for _, signal := range frontendEnvSignals {
-			if strings.Contains(content, signal) {
-				return true // Tek bir frontend prefix bile yeterli
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			// Yorum satırlarını atla
+			if strings.HasPrefix(line, "#") {
+				continue
+			}
+
+			// Frontend prefix'lerini kontrol et (NEXT_PUBLIC_, VITE_, REACT_APP_)
+			for _, signal := range frontendEnvSignals {
+				if strings.Contains(line, signal) {
+					return true // Tek bir frontend prefix bile yeterli
+				}
 			}
 		}
 	}
@@ -907,6 +934,12 @@ func (s *Scanner) ScanProjects() []domain.Project {
 			s.calculateHealthScore(projects[i].Path, &projects[i])
 			s.checkTools(projects[i].Path, &projects[i])
 		}
+
+		// Cache'den gelen projeler için de config senkronizasyonu yap
+		if s.syncProjectsWithConfig(projects) {
+			_ = config.SaveConfig(s.Config)
+		}
+
 		return projects
 	}
 
@@ -940,6 +973,11 @@ func (s *Scanner) ScanProjects() []domain.Project {
 
 	// 2. Cache Kaydetme
 	s.saveCache(cacheKey, allProjects)
+
+	// 3. Global Config Senkronizasyonu
+	if s.syncProjectsWithConfig(allProjects) {
+		_ = config.SaveConfig(s.Config)
+	}
 
 	return allProjects
 }
@@ -1304,6 +1342,9 @@ func (s *Scanner) scanDirectory(root string) []domain.Project {
 			// Araç kontrolü (Prisma, Drizzle, vb.)
 			s.checkTools(fullPath, &p)
 
+			// Yerel config kalıntısı temizliği yapılabilir ama şimdilik gerek yok
+			// s.manageProjectConfig(&p) kaldırıldı.
+
 			// Port kontrolü yap
 			portInfos := CheckProjectPorts(p.HasFrontend, p.HasBackend)
 			for _, info := range portInfos {
@@ -1343,10 +1384,14 @@ func (s *Scanner) scanSubdirectories(projectPath string, p *domain.Project) {
 		isFrontendHint := isFrontendFolderName(entry.Name())
 		isBackendHint := isBackendFolderName(entry.Name())
 
-		// Eğer klasör adı backend ipucu veriyorsa, önce backend'i kontrol et
+		// ========================================================
+		// KURAL 1 & 2: Karşılıklı Dışlama ve Erken Durma
+		// ========================================================
+		// Eğer klasör adı NET bir şekilde backend diyorsa (api, server vb.),
+		// içinde frontend aramaya çalışma ve burayı backend olarak işaretle.
 		if isBackendHint && !p.HasBackend {
-			// Önce backend imzalarını kontrol et
 			foundBackend := false
+			// Önce backend imzalarını kontrol et
 			for _, sig := range backendSigs {
 				if found, ver := sig.CheckFunc(subPath); found {
 					p.HasBackend = true
@@ -1362,35 +1407,9 @@ func (s *Scanner) scanSubdirectories(projectPath string, p *domain.Project) {
 				}
 			}
 
-			// Eğer spesifik teknoloji bulunamadıysa ama klasör adı backend ipucu veriyorsa
-			// ve içinde package.json veya go.mod varsa VEYA backend yapısı/dependency'leri varsa, genel backend olarak işaretle
+			// İmza bulunamasa bile, klasör adı "api" ise ve içinde package.json varsa backend kabul et
 			if !foundBackend {
-				hasPackageJSON := false
 				if _, err := os.Stat(filepath.Join(subPath, "package.json")); err == nil {
-					hasPackageJSON = true
-				}
-				hasGoMod := false
-				if _, err := os.Stat(filepath.Join(subPath, "go.mod")); err == nil {
-					hasGoMod = true
-				}
-				hasPythonFiles := false
-				if _, err := os.Stat(filepath.Join(subPath, "requirements.txt")); err == nil {
-					hasPythonFiles = true
-				}
-				if _, err := os.Stat(filepath.Join(subPath, "pyproject.toml")); err == nil {
-					hasPythonFiles = true
-				}
-
-				// Dosya yapısı analizi
-				hasBackendStruct := hasBackendStructure(subPath)
-
-				// Dependency analizi
-				hasBackendDeps := s.hasBackendDependencies(subPath)
-
-				// Env config analizi
-				hasBackendEnv := hasBackendEnvConfig(subPath)
-
-				if hasPackageJSON || hasGoMod || hasPythonFiles || hasBackendStruct || hasBackendDeps || hasBackendEnv {
 					p.HasBackend = true
 					p.BackendPath = subPath
 					p.BackendVer = "Var"
@@ -1398,11 +1417,15 @@ func (s *Scanner) scanSubdirectories(projectPath string, p *domain.Project) {
 					p.BackendCmd = s.detectStartCommand(subPath, false, true)
 				}
 			}
+
+			// Backend bulunduysa veya bu klasör net backend adayıysa,
+			// artık frontend kontrolü yapma ve döngüden çık (continue)
+			continue
 		}
 
-		// Eğer klasör adı frontend ipucu veriyorsa, önce frontend'i kontrol et
+		// Eğer klasör adı NET bir şekilde frontend diyorsa (web, ui, client vb.),
+		// içinde backend aramaya çalışma (Örn: web/app/api klasörü backend sanılmasın diye).
 		if isFrontendHint && !p.HasFrontend {
-			// Önce frontend imzalarını kontrol et
 			foundFrontend := false
 			for _, sig := range frontendSigs {
 				if found, ver := sig.CheckFunc(subPath); found {
@@ -1419,24 +1442,9 @@ func (s *Scanner) scanSubdirectories(projectPath string, p *domain.Project) {
 				}
 			}
 
-			// Eğer spesifik teknoloji bulunamadıysa ama klasör adı frontend ipucu veriyorsa
-			// ve içinde package.json varsa VEYA frontend yapısı/dependency'leri varsa, genel frontend olarak işaretle
+			// İmza bulunamasa bile, klasör adı "web" ise ve içinde package.json varsa frontend kabul et
 			if !foundFrontend {
-				hasPackageJSON := false
 				if _, err := os.Stat(filepath.Join(subPath, "package.json")); err == nil {
-					hasPackageJSON = true
-				}
-
-				// Dosya yapısı analizi
-				hasFrontendStruct := hasFrontendStructure(subPath)
-
-				// Dependency analizi
-				hasFrontendDeps := s.hasFrontendDependencies(subPath)
-
-				// Env config analizi
-				hasFrontendEnv := hasFrontendEnvConfig(subPath)
-
-				if hasPackageJSON || hasFrontendStruct || hasFrontendDeps || hasFrontendEnv {
 					p.HasFrontend = true
 					p.FrontendPath = subPath
 					p.FrontendVer = "Var"
@@ -1444,9 +1452,13 @@ func (s *Scanner) scanSubdirectories(projectPath string, p *domain.Project) {
 					p.FrontendCmd = s.detectStartCommand(subPath, true, false)
 				}
 			}
+
+			// Frontend bulunduysa veya bu klasör net frontend adayıysa,
+			// backend kontrolü yapma ve devam et
+			continue
 		}
 
-		// Klasör adı ipucu vermiyorsa, normal tarama yap
+		// Klasör adı ipucu vermiyorsa, normal (Generic) tarama yap
 		if !isFrontendHint && !isBackendHint {
 			// Check for ALL Frontend signatures
 			for _, sig := range frontendSigs {
@@ -1460,26 +1472,6 @@ func (s *Scanner) scanSubdirectories(projectPath string, p *domain.Project) {
 							p.FrontendVer = "Var"
 						}
 						p.FrontendCmd = s.detectStartCommand(subPath, true, false)
-					} else {
-						// Diğerleri ek frontend teknolojileri olarak kaydedilsin
-						verToStore := ver
-						if verToStore == "" {
-							verToStore = "Var"
-						}
-						// Aynı teknoloji zaten eklenmiş mi kontrol et
-						alreadyExists := sig.Type == p.FrontendType
-						for _, ft := range p.DetectedFrontendTechs {
-							if ft.Type == sig.Type {
-								alreadyExists = true
-								break
-							}
-						}
-						if !alreadyExists {
-							p.DetectedFrontendTechs = append(p.DetectedFrontendTechs, domain.DetectedTech{
-								Type:    sig.Type,
-								Version: verToStore,
-							})
-						}
 					}
 				}
 			}
@@ -1496,26 +1488,6 @@ func (s *Scanner) scanSubdirectories(projectPath string, p *domain.Project) {
 							p.BackendVer = "Var"
 						}
 						p.BackendCmd = s.detectStartCommand(subPath, false, true)
-					} else {
-						// Diğerleri ek backend teknolojileri olarak kaydedilsin
-						verToStore := ver
-						if verToStore == "" {
-							verToStore = "Var"
-						}
-						// Aynı teknoloji zaten eklenmiş mi kontrol et
-						alreadyExists := sig.Type == p.BackendType
-						for _, bt := range p.DetectedBackendTechs {
-							if bt.Type == sig.Type {
-								alreadyExists = true
-								break
-							}
-						}
-						if !alreadyExists {
-							p.DetectedBackendTechs = append(p.DetectedBackendTechs, domain.DetectedTech{
-								Type:    sig.Type,
-								Version: verToStore,
-							})
-						}
 					}
 				}
 			}
@@ -1833,6 +1805,61 @@ func (s *Scanner) detectStartCommand(path string, isFrontend, isBackend bool) st
 
 	// Default fallback
 	return "echo [DevTerminal] Başlatma komutu bulunamadı"
+}
+
+// syncProjectsWithConfig updates the global config with detected commands and applies overrides
+// Returns true if the config was modified
+func (s *Scanner) syncProjectsWithConfig(projects []domain.Project) bool {
+	if s.Config.ProjectOverrides == nil {
+		s.Config.ProjectOverrides = make(map[string]domain.ProjectOverride)
+	}
+
+	modified := false
+
+	for i := range projects {
+		p := &projects[i]
+		// Key'i her zaman normalize et (küçük harf)
+		key := strings.ToLower(p.Path)
+
+		override, exists := s.Config.ProjectOverrides[key]
+
+		if exists {
+			// Override varsa uygula
+			if override.Frontend != "" {
+				p.FrontendCmd = override.Frontend
+			}
+			if override.Backend != "" {
+				p.BackendCmd = override.Backend
+			}
+
+			// Eksik alanları tamamla (Config dosyasını zenginleştir)
+			changed := false
+			if override.Frontend == "" && p.FrontendCmd != "" {
+				override.Frontend = p.FrontendCmd
+				changed = true
+			}
+			if override.Backend == "" && p.BackendCmd != "" {
+				override.Backend = p.BackendCmd
+				changed = true
+			}
+
+			if changed {
+				s.Config.ProjectOverrides[key] = override
+				modified = true
+			}
+		} else {
+			// Yeni proje, config'e ekle
+			if p.FrontendCmd != "" || p.BackendCmd != "" {
+				s.Config.ProjectOverrides[key] = domain.ProjectOverride{
+					Frontend: p.FrontendCmd,
+					Backend:  p.BackendCmd,
+				}
+				modified = true
+			}
+		}
+	}
+
+	return modified
 }
 
 // checkTools checks for various tools (Prisma, Drizzle, Hasura, Supabase, Storybook)

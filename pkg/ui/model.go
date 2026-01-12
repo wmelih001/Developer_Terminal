@@ -411,10 +411,30 @@ func (m *MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// LaunchProject returns tea.Cmd
 				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, mode); return nil }
 			case "n", "N", "esc":
-				// İptal
+				// [Esc] Geri Dön
 				m.State = StateProjectActions
 				m.PortWarnings = nil
 				return m, nil
+			case "1":
+				// [1] Açık olan sunucuyu kapat ve bu sunucuyu aç
+				// Tüm çakışan portları öldür
+				for _, w := range m.PortWarnings {
+					_ = service.KillPort(w.Port)
+				}
+				// Biraz bekle (işletim sistemi portu serbest bıraksın)
+				time.Sleep(1 * time.Second)
+				// Sonra başlat
+				mode := m.PendingLaunchMode
+				m.State = StateProjectActions
+				return m, func() tea.Msg { m.Launcher.LaunchProject(m.Selected, mode); return nil }
+			case "2":
+				// [2] Açık olan portu kapat (Sadece öldür, başlatma)
+				for _, w := range m.PortWarnings {
+					_ = service.KillPort(w.Port)
+				}
+				m.State = StateProjectActions
+				m.PortWarnings = nil
+				return m, nil // tea.Quit yerine menüye dönmek daha mantıklı, kullanıcı belki başka işlem yapar
 			case "q":
 				return m, tea.Quit
 			}
@@ -799,9 +819,12 @@ func (m *MainModel) View() string {
 					"",
 					lipgloss.NewStyle().Foreground(lipgloss.Color("#f8f8f2")).Align(lipgloss.Center).Render(warnText),
 					"",
-					"Bu portlar şu an kullanımda. Yine de devam edilsin mi?",
+					"Bu portlar şu an kullanımda. Ne yapmak istersiniz?",
 					"",
-					lipgloss.NewStyle().Foreground(lipgloss.Color("#6272a4")).Render("[Y] Evet, Zorla Başlat    [N] Hayır, İptal Et"),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("#50fa7b")).Render("[1] 🔄 Kapat ve Başlat (Kill & Start)"),
+					lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render("[2] 🛑 Sadece Portu Kapat (Kill Only)"),
+					"",
+					lipgloss.NewStyle().Foreground(lipgloss.Color("#6272a4")).Render("[Esc] Geri Dön"),
 				),
 			)
 		return lipgloss.Place(m.Width, m.Height, lipgloss.Center, lipgloss.Center, box)
