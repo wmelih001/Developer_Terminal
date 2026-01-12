@@ -51,12 +51,6 @@ Siberpunk esintili estetiğe sahip birinci sınıf bir geliştirici aracı deney
 - **Duyarlı (Responsive)**: Terminal yeniden boyutlandırma olaylarına dinamik olarak uyum sağlar.
 - **Hızlı**: Anında açılış için tek bir yerel (native) binary olarak derlenmiştir.
 
-### ✨ Akışkan Animasyonlar
-Kullanıcı deneyimini en üst düzeye çıkaran görsel detaylar:
-- **Sinematik Açılış:** Özel tasarım ASCII logo ve "cool dark" renk paleti ile profesyonel karşılama ekranı.
-- **Dinamik Yükleme:** İşlem durumuna göre renk değiştiren progress bar ve sürekli güncellenen esprili yükleme mesajları ("Kuantum evreni taranıyor..." vb.).
-- **Yumuşak Geçişler:** Liste ve menü geçişlerinde göz yormayan akıcı animasyonlar.
-
 ## Teknoloji Yığını
 
 - **Çekirdek**: Go (Golang) 1.21+
