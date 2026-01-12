@@ -13,6 +13,12 @@ Developer Terminal, eski PowerShell profil betiklerinin yerini almak üzere tasa
 - **Backend**: Backend projesinin türünü (Go, NestJS vb.) algılar ve ilgili çalıştırma komutunu (örn. `go run .` veya `npm run start:dev`) yeni sekmede başlatır.
 - **Full Stack**: Terminal penceresini ikiye bölerek her ikisini aynı anda çalıştırır.
 
+### 📜 Gelişmiş Task Runner (Script Yöneticisi)
+Proje kök dizinindeki veya `frontend/backend` alt klasörlerindeki `package.json` dosyalarını otomatik olarak tarar ve `scripts` komutlarını listeler.
+- **Akıllı Çalıştırma:** Script ismine göre (`client:` veya `server:`) doğru çalışma dizinini (working directory) otomatik belirler ve komutu orada çalıştırır.
+- **Hızlı Arama:** Binlerce script arasında kaybolmayın. `Tab` tuşu ile arama modunu açın ve istediğiniz komutu anında bulun.
+- **Entegre Deneyim:** TUI'den ayrılmadan test, build, lint veya deploy işlemlerinizi tek tuşla başlatın.
+
 ### 🧠 Yapay Zeka Bağlam Oluşturucu
 Büyük Dil Modelleri (LLM) için derinlemesine ve yapısal bağlamlar oluşturun. Bir proje seçin ve `.gitignore` kurallarına sadık kalarak kod tabanınızın temiz bir ASCII ağaç yapısını üretin. Çıktı anında panoya kopyalanır, yapay zekaya prompt girmek için hazırdır.
 
@@ -44,6 +50,12 @@ Siberpunk esintili estetiğe sahip birinci sınıf bir geliştirici aracı deney
 - **Klavye Öncelikli**: Vim tarzı gezinme desteği.
 - **Duyarlı (Responsive)**: Terminal yeniden boyutlandırma olaylarına dinamik olarak uyum sağlar.
 - **Hızlı**: Anında açılış için tek bir yerel (native) binary olarak derlenmiştir.
+
+### ✨ Akışkan Animasyonlar
+Kullanıcı deneyimini en üst düzeye çıkaran görsel detaylar:
+- **Sinematik Açılış:** Özel tasarım ASCII logo ve "cool dark" renk paleti ile profesyonel karşılama ekranı.
+- **Dinamik Yükleme:** İşlem durumuna göre renk değiştiren progress bar ve sürekli güncellenen esprili yükleme mesajları ("Kuantum evreni taranıyor..." vb.).
+- **Yumuşak Geçişler:** Liste ve menü geçişlerinde göz yormayan akıcı animasyonlar.
 
 ## Teknoloji Yığını
 
@@ -78,21 +90,40 @@ Uygulamayı ilk kez çalıştırdığınızda, yapılandırma dosyası **otomati
 Örnek yapılandırma:
 
 ```yaml
+# Proje klasörlerinin yolu
 projects_paths:
-  - "C:\\Work\\Github"
-  - "Z:\\Projects"
+  - M:\Projeler
 
+# Tarama sırasında yok sayılacak klasörler
 ignored_files:
-  - "node_modules"
-  - ".git"
-  - "dist"
+  - .git
+  - node_modules
+  - dist
+  - .next
+  - .idea
+  - .vscode
 
-ngrok_path: "C:\\Users\\User\\AppData\\Local\\Microsoft\\WinGet\\Links\\ngrok.exe"
+# Ngrok yolu (opsiyonel)
+ngrok_path: C:\Users\KullaniciAdi\AppData\Local\Microsoft\WinGet\Links\ngrok.exe
 
+# Başlatma komutları (Windows Terminal)
 commands:
-  launch_frontend: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Frontend" cmd /k "npm run dev"'
-  launch_backend: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Backend" cmd /k "go run ."'
-  launch_full: 'wt.exe -w 0 new-tab -d "{{.Path}}" --title "{{.Name}} Full" cmd /k "npm run dev" ; split-pane -d "{{.Path}}" cmd /k "go run ."'
+  launch_frontend: wt.exe -w 0 new-tab -d "{{.FrontendPath}}" cmd /k "{{.FrontendCmd}}"
+  launch_backend: wt.exe -w 0 new-tab -d "{{.BackendPath}}" cmd /k "{{.BackendCmd}}"
+  launch_full: wt.exe -w 0 new-tab -d "{{.FrontendPath}}" cmd /k "{{.FrontendCmd}}" ; split-pane -d "{{.BackendPath}}" cmd /k "{{.BackendCmd}}"
+
+# Proje bazlı komut özelleştirmeleri (otomatik oluşturulur)
+project_overrides:
+  m:\projeler\my-nextjs-app:
+    frontend: npm run dev
+    backend: npm run start:dev
+  m:\projeler\go-api:
+    frontend: ""
+    backend: go run .
+
+# Son açılan projeler (otomatik oluşturulur)
+last_opened:
+  m:\projeler\my-project: 2026-01-12T19:00:00+03:00
 ```
 
 ## Lisans

@@ -340,8 +340,8 @@ func (m *MainModel) actionsView() string {
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorGrey).Render("───────────────────────") + "\n")
 	b.WriteString("[4] 📡  Canlı Bağlantı (Ngrok Public)\n\n")
 
-	// 3. Yapay Zeka
-	b.WriteString(HeaderStyle.Render("🧠 ARAÇLAR") + "\n")
+	// 3. Genel Araçlar
+	b.WriteString(HeaderStyle.Render("🛠️ GENEL") + "\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorGrey).Render("───────────────────────") + "\n")
 
 	if m.CopiedSuccess {
@@ -352,23 +352,36 @@ func (m *MainModel) actionsView() string {
 
 	b.WriteString("[6] 🩺  Dependency Doctor (Paket Güncelle)\n")
 	b.WriteString("[H] 🏥  Sağlık Skoru Hesapla\n")
+	b.WriteString("[E] 📂  Explorer'da Aç\n")
 
-	if m.Selected.HasPrisma {
-		b.WriteString("[F1] ◮  Prisma Studio\n")
-	}
-	if m.Selected.HasDrizzle {
-		b.WriteString("[F2] 🌧️  Drizzle Studio\n")
-	}
-	if m.Selected.HasHasura {
-		b.WriteString("[F3] 🦅  Hasura Console\n")
-	}
-	if m.Selected.HasSupabase {
-		b.WriteString("[F4] ⚡  Supabase Status\n")
-	}
-	if m.Selected.HasStorybook {
-		b.WriteString("[F5] 📕  Storybook (UI Dev)\n")
+	// 3.5. Task Runner (Scriptler varsa)
+	if len(m.Selected.Scripts) > 0 {
+		b.WriteString("[7] 📜  Script Çalıştır (Task Runner)\n")
 	}
 	b.WriteString("\n")
+
+	// 4. Veritabanı Araçları (sadece varsa göster)
+	hasDbTools := m.Selected.HasPrisma || m.Selected.HasDrizzle || m.Selected.HasHasura || m.Selected.HasSupabase || m.Selected.HasStorybook
+	if hasDbTools {
+		b.WriteString(HeaderStyle.Render("🧠 VERİTABANI & UI ARAÇLARI") + "\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorGrey).Render("───────────────────────") + "\n")
+		if m.Selected.HasPrisma {
+			b.WriteString("[F1] ◮  Prisma Studio\n")
+		}
+		if m.Selected.HasDrizzle {
+			b.WriteString("[F2] 🌧️  Drizzle Studio\n")
+		}
+		if m.Selected.HasHasura {
+			b.WriteString("[F3] 🦅  Hasura Console\n")
+		}
+		if m.Selected.HasSupabase {
+			b.WriteString("[F4] ⚡  Supabase Status\n")
+		}
+		if m.Selected.HasStorybook {
+			b.WriteString("[F5] 📕  Storybook (UI Dev)\n")
+		}
+		b.WriteString("\n")
+	}
 
 	// Seçenekleri bitir ve input satırını ekle
 
@@ -423,4 +436,96 @@ func (m *MainModel) renderFooter(pairs ...string) string {
 	parts = append(parts, keyStyle.Render(",")+" "+descStyle.Render("Daha Fazla"))
 
 	return strings.Join(parts, dot)
+}
+
+func (m *MainModel) taskRunnerView() string {
+	doc := strings.Builder{}
+
+	doc.WriteString("\n")
+
+	// Helper logic to style the list
+	// The list component handles its own rendering
+	listView := m.TaskRunnerList.View()
+	listView = strings.Replace(listView, "filtered", "sonuç", 1) // Hacky localization
+	listView = strings.Replace(listView, "Nothing matched", "Sonuç bulunamadı", 1)
+	doc.WriteString(listView)
+
+	return doc.String()
+}
+
+func (m *MainModel) splashView() string {
+	art := `
+  ____                 _                         _____                    _             _
+ |  _ \  _____   _____| | ___  _ __   ___ _ __  |_   _|__ _ __ _ __ ___ (_)_ __   __ _| |
+ | | | |/ _ \ \ / / _ \ |/ _ \| '_ \ / _ \ '__|   | |/ _ \ '__| '_ \ _ \| | '_ \ / _\ | |
+ | |_| |  __/\ V /  __/ | (_) | |_) |  __/ |      | |  __/ |  | | | | | | | | | | (_| | |
+ |____/ \___| \_/ \___|_|\___/| .__/ \___|_|      |_|\___|_|  |_| |_| |_|_|_| |_|\__,_|_|
+                              |_|
+`
+	// 1. Solid Color Logo (Cool Dark Purple/Blue)
+	// Havalı koyu stil: #bd93f9 (Dracula Purple) veya #6272a4 (Comment Blue/Gray)
+	// Kullanıcı "Havalı koyu bir renk" dedi.
+	styledLogo := lipgloss.NewStyle().Foreground(lipgloss.Color("#bd93f9")).Bold(true).Render(art)
+
+	version := lipgloss.NewStyle().Foreground(lipgloss.Color("#6272a4")).Italic(true).Render("Developer Terminal v1.0.5")
+
+	// 2. Dynamic Progress Bar
+	width := 40
+	completed := int(float64(width) * m.SplashProgress)
+	if completed > width {
+		completed = width
+	}
+	remaining := width - completed
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	// Bar Gradient Color
+	var barColor lipgloss.Color
+	if m.SplashProgress < 0.3 {
+		barColor = lipgloss.Color("#ff5555") // Red
+	} else if m.SplashProgress < 0.7 {
+		barColor = lipgloss.Color("#f1fa8c") // Yellow
+	} else {
+		barColor = lipgloss.Color("#50fa7b") // Green
+	}
+
+	barStyle := lipgloss.NewStyle().Foreground(barColor)
+	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#44475a"))
+
+	barStr := barStyle.Render(strings.Repeat("█", completed)) + emptyStyle.Render(strings.Repeat("░", remaining))
+	percent := int(m.SplashProgress * 100)
+
+	// 3. Random Loading Messages
+	messages := []string{
+		"Kuantum evreni taranıyor...",
+		"Kahve hazırlanıyor...",
+		"Matrix'e bağlanılıyor...",
+		"Node_modules ağırlığı hesaplanıyor...",
+		"Yapay zeka motoru ısıtılıyor...",
+		"Sistem kaynakları optimize ediliyor...",
+		"Geliştirici modu etkinleştiriliyor...",
+	}
+	// Pick message based on progress to cycle through them
+	// Show all 7 messages evenly distributed over the 6 seconds
+	msgIndex := int(m.SplashProgress * float64(len(messages)))
+	if msgIndex >= len(messages) {
+		msgIndex = len(messages) - 1
+	}
+	loadingMsg := messages[msgIndex]
+
+	// 4. Layout Assembly
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		styledLogo,
+		version,
+		"",
+		"",
+		barStr,
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#f8f8f2")).Render(fmt.Sprintf("%s (%d%%)", loadingMsg, percent)),
+		"",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#6272a4")).Faint(true).Render("Atlamak için 'Space' veya 'Enter'"),
+	)
+
+	return lipgloss.Place(m.Width, m.Height, lipgloss.Center, lipgloss.Center, content)
 }

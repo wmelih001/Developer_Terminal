@@ -25,12 +25,32 @@ var CommonPorts = map[string][]int{
 
 // IsPortInUse verilen portun kullanımda olup olmadığını kontrol eder
 func IsPortInUse(port int) bool {
-	address := fmt.Sprintf("127.0.0.1:%d", port)
+	// 1. Basit TCP Listen kontrolü (127.0.0.1)
+	if isPortBound("127.0.0.1", port) {
+		return true
+	}
+
+	// 2. 0.0.0.0 kontrolü (Tüm IPv4 arayüzleri)
+	if isPortBound("0.0.0.0", port) {
+		return true
+	}
+
+	// 3. IPv6 kontrolü (::1)
+	if isPortBound("::1", port) {
+		return true
+	}
+
+	return false
+}
+
+// isPortBound tries to listen on an address/port to check availability
+func isPortBound(host string, port int) bool {
+	address := net.JoinHostPort(host, strconv.Itoa(port))
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		return true // Port kullanımda
+		return true // Port kullanımda (Hata aldıysak bind edemiyoruz demektir)
 	}
-	listener.Close()
+	defer listener.Close()
 	return false // Port boş
 }
 
@@ -172,4 +192,18 @@ func FormatPortWarning(info PortInfo) string {
 		return fmt.Sprintf("⚠️ Port %d kullanımda (%s, PID: %d)", info.Port, info.Process, info.ProcessID)
 	}
 	return fmt.Sprintf("⚠️ Port %d kullanımda", info.Port)
+}
+
+// KillPort belirtilen portu kullanan işlemi sonlandırmaya çalışır
+func KillPort(port int) error {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		// Windows: netstat ile PID bul ve taskkill ile öldür
+		command := fmt.Sprintf("for /f \"tokens=5\" %%a in ('netstat -aon ^| find \":%d\" ^| find \"LISTENING\"') do taskkill /F /PID %%a", port)
+		cmd = exec.Command("cmd", "/C", command)
+	} else {
+		// Unix: lsof -t -i:PORT | xargs kill -9
+		cmd = exec.Command("sh", "-c", fmt.Sprintf("lsof -t -i:%d | xargs kill -9", port))
+	}
+	return cmd.Run()
 }

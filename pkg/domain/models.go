@@ -1,12 +1,22 @@
 package domain
 
+import "time"
+
 // Config uygulama konfigürasyonunu tutar
 type Config struct {
-	ProjectsPaths []string     `mapstructure:"projects_paths"`
-	Commands      Commands     `mapstructure:"commands"`
-	IgnoredFiles  []string     `mapstructure:"ignored_files"`
-	NgrokPath     string       `mapstructure:"ngrok_path"`
-	CustomRules   []CustomRule `mapstructure:"custom_rules"`
+	ProjectsPaths    []string                   `mapstructure:"projects_paths"`
+	Commands         Commands                   `mapstructure:"commands"`
+	IgnoredFiles     []string                   `mapstructure:"ignored_files"`
+	NgrokPath        string                     `mapstructure:"ngrok_path"`
+	CustomRules      []CustomRule               `mapstructure:"custom_rules"`
+	ProjectOverrides map[string]ProjectOverride `mapstructure:"project_overrides"`
+	LastOpened       map[string]time.Time       `mapstructure:"last_opened"`
+}
+
+// ProjectOverride proje bazlı komut özelleştirmelerini tutar
+type ProjectOverride struct {
+	Frontend string `mapstructure:"frontend"`
+	Backend  string `mapstructure:"backend"`
 }
 
 // CustomRule kullanıcı tanımlı tespit kuralını temsil eder
@@ -84,6 +94,9 @@ type Project struct {
 	HealthDetails []string // Sağlık skoru detayları (hangi kriterler var/yok)
 	// Port uyarıları
 	PortWarnings []string // Kullanımda olan portlar
+
+	// Package Scripts
+	Scripts map[string]string // package.json scripts (key: script name, value: command)
 }
 
 // ProjectType teknoloji yığınını tanımlar

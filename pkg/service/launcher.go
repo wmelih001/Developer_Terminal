@@ -3,9 +3,14 @@ package service
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"text/template"
+	"time"
 
+	"devterminal/pkg/config"
 	"devterminal/pkg/domain"
 )
 
@@ -19,6 +24,14 @@ func NewLauncher(cfg *domain.Config) *Launcher {
 
 // LaunchProject opens the project in Windows Terminal using the configured template
 func (l *Launcher) LaunchProject(p *domain.Project, mode string) error {
+	// Update LastOpened time
+	if l.Config.LastOpened == nil {
+		l.Config.LastOpened = make(map[string]time.Time)
+	}
+	l.Config.LastOpened[strings.ToLower(p.Path)] = time.Now()
+	// Save config silently
+	_ = config.SaveConfig(l.Config)
+
 	var cmdTmpl string
 	switch mode {
 	case "frontend":
@@ -147,6 +160,45 @@ func (l *Launcher) LaunchStorybook(p *domain.Project) error {
 	}
 	cmdStr := fmt.Sprintf(`wt -w 0 nt --title "Storybook" -d "%s" cmd /k "npm run storybook"`, path)
 	return l.runCmd(cmdStr)
+}
+
+// LaunchScript opens a new terminal tab to run the selected package.json script
+// LaunchScript opens a new terminal tab to run the selected package.json script
+func (l *Launcher) LaunchScript(p domain.Project, scriptName, scriptCmd string) error {
+	workingDir := p.Path
+	actualScriptName := scriptName
+
+	// Determine correct working directory and clean script name
+	if strings.HasPrefix(scriptName, "client:") {
+		workingDir = p.FrontendPath
+		actualScriptName = strings.TrimPrefix(scriptName, "client:")
+	} else if strings.HasPrefix(scriptName, "server:") {
+		workingDir = p.BackendPath
+		actualScriptName = strings.TrimPrefix(scriptName, "server:")
+	}
+
+	pm := l.getPackageManager(workingDir)
+	runCmd := fmt.Sprintf("%s run %s", pm, actualScriptName)
+
+	// Create title: "npm run dev"
+	title := fmt.Sprintf("%s %s", pm, actualScriptName)
+
+	// Use workingDir instead of p.Path
+	cmdStr := fmt.Sprintf(`wt -w 0 nt --title "%s" -d "%s" cmd /k "%s"`, title, workingDir, runCmd)
+	return l.runCmd(cmdStr)
+}
+
+func (l *Launcher) getPackageManager(path string) string {
+	if _, err := os.Stat(filepath.Join(path, "bun.lockb")); err == nil {
+		return "bun"
+	}
+	if _, err := os.Stat(filepath.Join(path, "pnpm-lock.yaml")); err == nil {
+		return "pnpm"
+	}
+	if _, err := os.Stat(filepath.Join(path, "yarn.lock")); err == nil {
+		return "yarn"
+	}
+	return "npm"
 }
 
 // runCmd helper
