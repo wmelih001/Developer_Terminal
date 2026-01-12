@@ -19,6 +19,23 @@ Büyük Dil Modelleri (LLM) için derinlemesine ve yapısal bağlamlar oluşturu
 ### 🩺 Bağımlılık Doktoru
 Projelerinizi sağlıklı tutun. Developer Terminal, `package.json` dosyalarını analiz ederek temel framework'lerin (React, Next.js, NestJS) güncel sürümlerini görüntüler ve terminalden çıkmadan güncelliğini yitirmiş bağımlılıkları kontrol eder.
 
+### 🏥 Proje Sağlık Skoru
+Projelerinizin kalitesini ve standartlara uygunluğunu anlık olarak ölçün. "Sağlık Skoru Hesapla" özelliği, projenizi derinlemesine tarayarak (recursive) 100 üzerinden puanlar:
+- **Kriterler:** Git durumu, README varlığı, Lisans dosyası, CI/CD yapılandırması, Docker kullanımı, Linter ayarları ve Env dosyaları.
+- **Detaylı Rapor:** Eksik olan öğeleri ve puan kayıplarını listeleyerek iyileştirme önerileri sunar.
+- **Akıllı Tarama:** Alt klasörlerdeki (`backend/schema.prisma` gibi) yapılandırmaları bile tespit eder.
+
+### 🛠️ Geliştirici Araçları (Dev Tools)
+Proje klasörlerinizde gömülü olan veritabanı ve UI araçlarını otomatik algılar ve tek tuşla başlatır. Komutlar, aracın bulunduğu alt klasörde (örn: `backend/`) otomatik olarak çalıştırılır:
+- **[F1] Prisma Studio**: Prisma veritabanı yönetim panelini açar.
+- **[F2] Drizzle Studio**: Drizzle ORM stüdyosunu başlatır.
+- **[F3] Hasura Console**: Hasura GraphQL konsolunu açar.
+- **[F4] Supabase Status**: Yerel Supabase durumunu görüntüler.
+- **[F5] Storybook**: UI bileşen geliştirme ortamını başlatır.
+
+### 🛡️ Port Çakışma Tespiti
+Projeleri başlatmadan önce, gerekli portların (örn: 3000, 8080) dolu olup olmadığını kontrol eder. Çakışma varsa sizi uyararak "bind address already in use" hatalarının önüne geçer.
+
 ### 🚇 Ngrok Entegrasyonu
 Yerel tünellerinizi doğrudan kontrol panelinden yönetin. Ngrok yolunuzu yapılandırın ve aktif tünel durumunu zahmetsizce görüntüleyin.
 
